@@ -663,6 +663,10 @@ pub struct TeamMatchDetail {
     pub your_side: Option<String>,
     pub sets: Vec<SetScore>,
     #[serde(default)]
+    pub team1_shortname: Option<String>,
+    #[serde(default)]
+    pub team2_shortname: Option<String>,
+    #[serde(default)]
     pub ribbon: bool,
     /// Tournament URL (event) for this match; present when matches span multiple events (e.g. league).
     #[serde(default)]
@@ -714,11 +718,29 @@ pub struct MatchDetailData {
     /// Refs by display name (pseudonym), like team1_name/team2_name.
     #[serde(rename = "refs_display", default)]
     pub refs_display: Option<String>,
+    /// Per-slot ref teams (id, raw token, pseudonym, shortname, photo).
+    #[serde(default)]
+    pub refs_slots: Vec<RefSlot>,
     pub ribbon: bool,
     pub skip_condition: Option<String>,
     pub nsets: Option<u32>,
     pub initial_notes: Option<String>,
     pub final_notes: Option<String>,
+}
+
+/// One referee slot on a match: a concrete team, a tag, or a winner/loser reference.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+pub struct RefSlot {
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub initial: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub shortname: Option<String>,
+    #[serde(default)]
+    pub photo: Option<String>,
 }
 
 /// Per-point in-video start time. Includes point_uuid so cameras can have different point sets.

@@ -244,25 +244,6 @@ fn scores_by_set_from_points(points: &[&Value]) -> Vec<(String, u64, u64)> {
 }
 
 
-/// Read a point's set_number from match-state JSON (handles null / int forms).
-fn set_number_from_state(state: &Option<Result<Value, String>>, point_id: &str) -> u32 {
-    let Some(Ok(v)) = state.as_ref() else {
-        return 1;
-    };
-    let Some(points) = v.get("points").and_then(|p| p.as_array()) else {
-        return 1;
-    };
-    for p in points {
-        if p.get("uuid").and_then(|u| u.as_str()) == Some(point_id) {
-            return p
-                .get("set_number")
-                .and_then(|n| n.as_u64().or_else(|| n.as_i64().map(|i| i.max(0) as u64)))
-                .unwrap_or(1) as u32;
-        }
-    }
-    1
-}
-
 /// Optimistically write set_number for a point in match-state JSON. Returns true if found.
 fn set_number_in_state(state: &mut Value, point_id: &str, new_set: u32) -> bool {
     let Some(points) = state.get_mut("points").and_then(|p| p.as_array_mut()) else {
@@ -294,22 +275,33 @@ fn trigger_point_row_flash(mut flash_point_id: Signal<Option<String>>, point_id:
     flash_point_id.set(Some(point_id));
 }
 
-/// Set +/- controls for one point. Own component so it re-renders from
-/// ``state_signal`` when set_number changes, independent of how the parent
-/// table rows are reconciled (prebuilt VNodes were showing a stale number).
+/// Set +/- controls for one point.
+///
+/// The number is a local signal updated in the click handler. Parent rows are
+/// prebuilt VNodes, so a shared match-state signal often does not repaint this
+/// cell until a later click. The prop still wins when the parent catches up
+/// (including an API error that rolls the optimistic value back).
 #[component]
 fn SetNumberControls(
     point_id: String,
+    set_number: u32,
     url: String,
     mut state_signal: Signal<Option<Result<Value, String>>>,
     mut action_error: Signal<Option<String>>,
 ) -> Element {
-    // Subscribe to state so this cell always shows the live value for point_id.
-    let set_num = set_number_from_state(&state_signal(), point_id.as_str());
+    let mut shown = use_signal(|| set_number);
+    let mut applied = use_signal(|| set_number);
+    if set_number != applied() {
+        applied.set(set_number);
+        if shown() != set_number {
+            shown.set(set_number);
+        }
+    }
     let pid_inc = point_id.clone();
     let pid_dec = point_id.clone();
     let u_inc = url.clone();
     let u_dec = url.clone();
+    let displayed = shown();
     rsx! {
         div { class: "set-number-controls",
             button {
@@ -317,8 +309,9 @@ fn SetNumberControls(
                 r#type: "button",
                 onclick: move |_| {
                     let prev = state_signal().clone();
-                    let current = set_number_from_state(&prev, pid_inc.as_str());
+                    let current = shown();
                     let new_set = current.saturating_add(1).max(1);
+                    shown.set(new_set);
                     if let Some(Ok(ref state)) = prev.clone() {
                         let mut state = state.clone();
                         if set_number_in_state(&mut state, pid_inc.as_str(), new_set) {
@@ -329,12 +322,14 @@ fn SetNumberControls(
                     let p = pid_inc.clone();
                     let mut state_signal = state_signal;
                     let mut action_error = action_error;
+                    let mut shown = shown;
                     spawn(async move {
                         let body = serde_json::json!({ "point_id": p, "set_number": new_set });
                         match api::update_point(&u, &p, &body).await {
                             Ok(_) => { action_error.set(None); }
                             Err(e) => {
                                 action_error.set(Some(e));
+                                shown.set(current);
                                 state_signal.set(prev);
                             }
                         }
@@ -342,17 +337,18 @@ fn SetNumberControls(
                 },
                 "+"
             }
-            span { class: "set-number-display", "{set_num}" }
+            span { class: "set-number-display", "{displayed}" }
             button {
                 class: "set-step-btn",
                 r#type: "button",
                 onclick: move |_| {
                     let prev = state_signal().clone();
-                    let current = set_number_from_state(&prev, pid_dec.as_str());
+                    let current = shown();
                     let new_set = current.saturating_sub(1).max(1);
                     if new_set == current {
                         return;
                     }
+                    shown.set(new_set);
                     if let Some(Ok(ref state)) = prev.clone() {
                         let mut state = state.clone();
                         if set_number_in_state(&mut state, pid_dec.as_str(), new_set) {
@@ -363,12 +359,14 @@ fn SetNumberControls(
                     let p = pid_dec.clone();
                     let mut state_signal = state_signal;
                     let mut action_error = action_error;
+                    let mut shown = shown;
                     spawn(async move {
                         let body = serde_json::json!({ "point_id": p, "set_number": new_set });
                         match api::update_point(&u, &p, &body).await {
                             Ok(_) => { action_error.set(None); }
                             Err(e) => {
                                 action_error.set(Some(e));
+                                shown.set(current);
                                 state_signal.set(prev);
                             }
                         }
@@ -410,7 +408,8 @@ fn stones_elapsed_beats_ms(stamp_opt: Option<&str>, end_opt: Option<&str>) -> u3
 }
 
 /// Px of drag magnitude per 5 stones when arming the quick timer.
-const PX_PER_5: f64 = 30.0;
+/// Doubled so the countdown grows half as fast for the same drag distance.
+const PX_PER_5: f64 = 60.0;
 /// Global beat length (seconds) for the quick timer countdown.
 const QUICK_TIMER_BEAT: f64 = 1.5;
 
@@ -780,6 +779,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                 struct PointRow {
                     index: usize,
                     point_id: String,
+                    set_number: u32,
                     winner: String,
                     rerolled: bool,
                     elapsed: u32,
@@ -793,6 +793,10 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
+                        let set_number = pt
+                            .get("set_number")
+                            .and_then(|n| n.as_u64().or_else(|| n.as_i64().map(|i| i.max(0) as u64)))
+                            .unwrap_or(1) as u32;
                         let winner = pt
                             .get("winner")
                             .and_then(|v| v.as_str())
@@ -811,6 +815,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                         PointRow {
                             index: index + 1,
                             point_id,
+                            set_number,
                             winner,
                             rerolled,
                             elapsed,
@@ -1257,6 +1262,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                     #score-stones-card .col-md-6.mb-4{margin-bottom:0.5rem!important}\
                     #score-by-set .row{margin-bottom:0!important}\
                     #score-by-set h4{font-size:1rem}\
+                    #time-elapsed{white-space:nowrap;font-variant-numeric:tabular-nums}\
                     #score-by-set strong,#score-by-set #time-elapsed{font-size:0.95rem}\
                     #score-by-set small{font-size:0.75rem}}";
                 let mut state_signal = state_signal;
@@ -1314,6 +1320,7 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                     SetNumberControls {
                                         key: "set-{pt_id}",
                                         point_id: pid.clone(),
+                                        set_number: r.set_number,
                                         url: url.clone(),
                                         state_signal: state_signal,
                                         action_error: action_error,
@@ -1791,14 +1798,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                         div { class: "row",
                                             div { class: "col-md-6 mb-4 mb-md-0",
                                                 div { id: "score-by-set",
-                                                    div { class: "row mb-1 align-items-center",
-                                                        div { class: "col-5 text-center",
+                                                    div { class: "d-flex align-items-center mb-1 gap-2",
+                                                        div { class: "flex-grow-1 text-center text-truncate",
                                                             small { class: "text-muted", "{team1}" }
                                                         }
-                                                        div { class: "col-2 text-center",
+                                                        div { class: "flex-shrink-0 text-nowrap text-center",
                                                             span { id: "time-elapsed", "{time_elapsed_str}" }
                                                         }
-                                                        div { class: "col-5 text-center",
+                                                        div { class: "flex-grow-1 text-center text-truncate",
                                                             small { class: "text-muted", "{team2}" }
                                                         }
                                                     }
@@ -1806,14 +1813,14 @@ pub fn RunMatch(url: String, match_id: String) -> Element {
                                                         div { class: "text-muted text-center", "No points yet" }
                                                     } else {
                                                         for (set_num, t1, t2) in score_rows.iter() {
-                                                            div { class: "row mb-0", key: "{set_num}",
-                                                                div { class: "col-5 text-center",
+                                                            div { class: "d-flex align-items-center mb-0", key: "{set_num}",
+                                                                div { class: "flex-grow-1 text-center",
                                                                     strong { id: "team1-set-{set_num}-score", "{t1}" }
                                                                 }
-                                                                div { class: "col-2 text-center",
+                                                                div { class: "flex-shrink-0 text-nowrap text-center", style: "min-width: 4.5rem;",
                                                                     small { class: "text-muted", "Set {set_num}" }
                                                                 }
-                                                                div { class: "col-5 text-center",
+                                                                div { class: "flex-grow-1 text-center",
                                                                     strong { id: "team2-set-{set_num}-score", "{t2}" }
                                                                 }
                                                             }
@@ -2499,12 +2506,12 @@ mod quick_timer_tests {
     #[test]
     fn magnitude_snaps_to_multiples_of_five() {
         assert_eq!(drag_magnitude_to_stones(0.0, 0.0), 0);
-        // 30px per 5 stones; ~15px (half step) rounds to 5.
-        assert_eq!(drag_magnitude_to_stones(15.5, 0.0), 5);
-        // 60px -> 10, direction-independent (use y, and negatives).
-        assert_eq!(drag_magnitude_to_stones(0.0, -60.0), 10);
-        // 3-4-5 triangle: magnitude 150px -> 25 stones.
-        assert_eq!(drag_magnitude_to_stones(90.0, 120.0), 25);
+        // 60px per 5 stones; a half step (30px) rounds up to 5.
+        assert_eq!(drag_magnitude_to_stones(30.0, 0.0), 5);
+        // 120px -> 10, direction-independent (use y, and negatives).
+        assert_eq!(drag_magnitude_to_stones(0.0, -120.0), 10);
+        // 3-4-5 triangle: magnitude 150px -> 2.5 steps, rounds to 15 stones.
+        assert_eq!(drag_magnitude_to_stones(90.0, 120.0), 15);
         // Small jitter below half a step stays 0 (tap cancel).
         assert_eq!(drag_magnitude_to_stones(10.0, 0.0), 0);
     }

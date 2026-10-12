@@ -3,6 +3,7 @@ Tournament site Flask application factory.
 """
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from flask import Flask
@@ -111,6 +112,15 @@ def create_app(config: dict | None = None) -> Flask:
         app.config["SESSION_COOKIE_SECURE"] = True
     else:
         app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    # Stay signed in across browser restarts. login_user(..., remember=True)
+    # also sets a remember cookie; the permanent session covers the same window.
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
+    app.config["SESSION_REFRESH_EACH_REQUEST"] = True
+    app.config["REMEMBER_COOKIE_DURATION"] = timedelta(days=365)
+    app.config["REMEMBER_COOKIE_HTTPONLY"] = True
+    app.config["REMEMBER_COOKIE_REFRESH_EACH_REQUEST"] = True
+    app.config["REMEMBER_COOKIE_SAMESITE"] = app.config["SESSION_COOKIE_SAMESITE"]
+    app.config["REMEMBER_COOKIE_SECURE"] = bool(app.config.get("SESSION_COOKIE_SECURE", False))
 
     # Google OAuth configuration
     app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID", "")

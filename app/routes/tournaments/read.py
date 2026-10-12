@@ -22,12 +22,14 @@ from app.domain.enums import (
 )
 from app.serializers.tournament_serializer import (
     team_name_for_match,
+    team_shortname_for_match,
     tournament_to_dict,
 )
 from app.services._common import Scope, current_user_type
 from app.services.dual_write import (
     get_camera_timepoint_arrays,
     get_match_player_ids,
+    get_match_ref_initials,
     get_match_ref_team_ids,
     get_match_refs_csv,
     get_match_refs_initial_csv,
@@ -339,6 +341,32 @@ def _team_display_name(tournament, team_id):
         return reg.pseudonym
     t = Team.query.get(team_id)
     return t.name if t else team_id
+
+
+def _ref_slots_for_match(tournament, match):
+    """Per-slot ref info for the team chip: id, raw token, name, shortname, photo."""
+    ids = get_match_ref_team_ids(match)
+    initials = get_match_ref_initials(match)
+    n = max(len(ids), len(initials))
+    slots = []
+    for i in range(n):
+        tid = (ids[i] if i < len(ids) else "").strip()
+        initial = (initials[i] if i < len(initials) else "").strip()
+        if not tid and not initial:
+            continue
+        name, photo, shortname = (None, None, None)
+        if tid:
+            name, photo, shortname = _team_pseudonym_and_photo(tournament, tid)
+        slots.append(
+            {
+                "team_id": tid or None,
+                "initial": initial or None,
+                "name": name,
+                "shortname": shortname,
+                "photo": photo,
+            }
+        )
+    return slots
 
 
 def _refs_display_for_match(tournament, match):
@@ -728,6 +756,8 @@ def tournament_results_team_matches(tournament_url, team_id):
                 "name": m.name,
                 "team1_name": team1_name,
                 "team2_name": team2_name,
+                "team1_shortname": team_shortname_for_match(tournament, m, "team1"),
+                "team2_shortname": team_shortname_for_match(tournament, m, "team2"),
                 "match_winner": m.match_winner.value if m.match_winner else None,
                 "your_side": your_side,
                 "sets": sets_list,
@@ -1225,6 +1255,7 @@ def tournament_match_detail(tournament_url):
                 "refs": get_match_refs_csv(match) or None,
                 "refs_initial": get_match_refs_initial_csv(match) or None,
                 "refs_display": _refs_display_for_match(tournament, match),
+                "refs_slots": _ref_slots_for_match(tournament, match),
                 "ribbon": match.ribbon,
                 "skip_condition": match.skip_condition,
                 "nsets": match.nsets,

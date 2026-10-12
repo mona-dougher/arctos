@@ -1,7 +1,7 @@
 use super::TeamSelectionField;
 use crate::Route;
 use crate::api;
-use crate::components::AssEntry;
+use crate::components::{AssEntry, TeamLabel, TeamLabelStyle, TeamSlot};
 use crate::display::short_or_truncate;
 use crate::types::*;
 use dioxus::html::ModifiersInteraction;
@@ -310,6 +310,54 @@ fn token_matches_team(token: &str, team_id: &str, team_options: &[TeamOption]) -
         return true;
     }
     false
+}
+
+/// Concrete team, tag, reference, or empty slot for [`TeamLabel`].
+fn team_slot_for(id: Option<&str>, initial: Option<&str>, options: &[TeamOption]) -> TeamSlot {
+    let id = id.map(str::trim).filter(|s| !s.is_empty());
+    let initial = initial.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(id) = id {
+        if let Some(opt) = options.iter().find(|o| o.id == id) {
+            return TeamSlot {
+                token: id.to_string(),
+                team_id: Some(opt.id.clone()),
+                name: opt
+                    .pseudonym
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .or(Some(opt.id.clone())),
+                shortname: opt.shortname.clone(),
+                photo: opt.profile_photo.clone(),
+            };
+        }
+        return TeamSlot {
+            token: initial.unwrap_or(id).to_string(),
+            team_id: Some(id.to_string()),
+            name: initial.map(|s| s.to_string()).or(Some(id.to_string())),
+            shortname: None,
+            photo: None,
+        };
+    }
+    let token = initial.unwrap_or("TBA").to_string();
+    if let Some(opt) = options.iter().find(|o| o.id == token) {
+        return team_slot_for(Some(opt.id.as_str()), None, options);
+    }
+    TeamSlot {
+        token,
+        team_id: None,
+        name: None,
+        shortname: None,
+        photo: None,
+    }
+}
+
+fn team_slot_from_token(token: &str, options: &[TeamOption]) -> TeamSlot {
+    let token = token.trim();
+    if options.iter().any(|o| o.id == token) {
+        team_slot_for(Some(token), None, options)
+    } else {
+        team_slot_for(None, Some(token), options)
+    }
 }
 
 /// Full display name for a team option (no shortname truncation).
@@ -3928,7 +3976,6 @@ fn TableView(
         })
         .collect();
 
-    let base_url = api::base_url();
     rsx! {
         div { class: "table-responsive schedule-table-view",
             table { class: "table table-striped table-hover table-sm align-middle",
@@ -3968,34 +4015,32 @@ fn TableView(
                 tbody {
                     {matches.iter().map(|m| {
                         let match_id = m.uuid.clone();
-                        // Team 1 column: only m.team1 / m.team1_initial (first token if comma-separated).
-                        // t1_raw is the full pseudonym (for highlight-filter matching); t1_label is the
-                        // possibly-shortened/truncated form that gets rendered in the cell.
+                        // Raw pseudonyms for the highlight filter; chips render shortnames.
                         let opt1 = m.team1.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
                         let t1_raw = opt1.and_then(|o| o.pseudonym.as_deref()).map(String::from)
                             .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
-                        let t1_label = opt1.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
-                            .unwrap_or_else(|| m.team1_initial.as_deref().unwrap_or("").to_string());
-                        let photo1 = opt1.and_then(|o| o.profile_photo.clone());
-                        // Team 2 column: only m.team2 / m.team2_initial (first token if comma-separated)
                         let opt2 = m.team2.as_ref().and_then(|id| data.team_options.iter().find(|o| &o.id == id));
                         let t2_raw = opt2.and_then(|o| o.pseudonym.as_deref()).map(String::from)
                             .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
-                        let t2_label = opt2.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref()))
-                            .unwrap_or_else(|| m.team2_initial.as_deref().unwrap_or("").to_string());
-                        let photo2 = opt2.and_then(|o| o.profile_photo.clone());
-                        // Refs column: per-slot resolved id else initial/tag (#197).
-                        let refs_entries: Vec<(String, String, Option<String>)> = refs_tokens(m)
-                            .into_iter()
-                            .map(|token| {
-                                let opt = data.team_options.iter().find(|o| o.id == token);
-                                let raw = opt.and_then(|o| o.pseudonym.as_deref()).map(String::from).unwrap_or_else(|| token.clone());
-                                let label = opt.map(|o| short_or_truncate(o.pseudonym.as_deref().unwrap_or(o.id.as_str()), o.shortname.as_deref())).unwrap_or_else(|| token.clone());
-                                let photo = opt.and_then(|o| o.profile_photo.clone());
-                                (raw, label, photo)
-                            })
+                        let t1_slot = team_slot_for(m.team1.as_deref(), m.team1_initial.as_deref(), &data.team_options);
+                        let t2_slot = team_slot_for(m.team2.as_deref(), m.team2_initial.as_deref(), &data.team_options);
+                        let ref_toks = refs_tokens(m);
+                        let refs_slots: Vec<TeamSlot> = ref_toks
+                            .iter()
+                            .map(|token| team_slot_from_token(token, &data.team_options))
                             .collect();
-                        let refs_list: Vec<(String, Option<String>)> = refs_entries.iter().map(|(_, l, p)| (l.clone(), p.clone())).collect();
+                        let refs_joined_raw = ref_toks
+                            .iter()
+                            .map(|token| {
+                                data.team_options
+                                    .iter()
+                                    .find(|o| &o.id == token)
+                                    .and_then(|o| o.pseudonym.as_deref())
+                                    .unwrap_or(token.as_str())
+                                    .to_string()
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
                         // Highlight: match against raw (full) pseudonyms so a query for the full team
                         // name still matches teams whose label was shortened/truncated.
                         let (highlight_playing, highlight_ref) = if highlight_team.is_empty() {
@@ -4004,11 +4049,6 @@ fn TableView(
                             let ht = highlight_team.to_lowercase();
                             let playing = t1_raw.to_lowercase().contains(&ht)
                                 || t2_raw.to_lowercase().contains(&ht);
-                            let refs_joined_raw = refs_entries
-                                .iter()
-                                .map(|(r, _, _)| r.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ");
                             let reffing = !playing && refs_joined_raw.to_lowercase().contains(&ht);
                             (playing, reffing)
                         };
@@ -4022,17 +4062,6 @@ fn TableView(
                             }
                             s
                         };
-                        let t1 = if t1_label.contains(',') { t1_label.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t1_label };
-                        let t2 = if t2_label.contains(',') { t2_label.split(',').next().map(|s| s.trim().to_string()).unwrap_or_default() } else { t2_label };
-                        let (t1_kind, t1_label) = team_ref_display(&t1);
-                        let (t2_kind, t2_label) = team_ref_display(&t2);
-                        let refs_display_list: Vec<(String, Option<String>, u8, String)> = refs_list
-                            .iter()
-                            .map(|(d, p)| {
-                                let (k, l) = team_ref_display(d);
-                                (d.clone(), p.clone(), k, l)
-                            })
-                            .collect();
                         let schedule_type_display = m.schedule_type.as_deref().unwrap_or("-");
                         let structural = is_structural_match(m);
                         // Editor table: structural rows show real statuses like matches.
@@ -4071,47 +4100,18 @@ fn TableView(
                                     }
                                 }
                                 td { class: "align-middle",
-                                    div { class: "d-flex align-items-center gap-1",
-                                        if t1_kind == 0 {
-                                            if let Some(ph) = &photo1 {
-                                                img { class: "rounded-circle", style: "width: 1.5em; height: 1.5em; object-fit: cover;", src: "{base_url}/static/{ph}", alt: "" }
-                                            } else if !t1.is_empty() {
-                                                span { class: "rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.5em; height: 1.5em; font-size: 0.75em; background: #6c757d; color: white;", "{t1.chars().next().unwrap_or('?')}" }
-                                            }
-                                        }
-                                        if t1_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                                        if t1_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                                        span { "{t1_label}" }
-                                    }
+                                    TeamLabel { slot: t1_slot.clone(), label_style: TeamLabelStyle::Short }
                                 }
                                 td { class: "align-middle",
-                                    div { class: "d-flex align-items-center gap-1",
-                                        if t2_kind == 0 {
-                                            if let Some(ph) = &photo2 {
-                                                img { class: "rounded-circle", style: "width: 1.5em; height: 1.5em; object-fit: cover;", src: "{base_url}/static/{ph}", alt: "" }
-                                            } else if !t2.is_empty() {
-                                                span { class: "rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.5em; height: 1.5em; font-size: 0.75em; background: #6c757d; color: white;", "{t2.chars().next().unwrap_or('?')}" }
-                                            }
-                                        }
-                                        if t2_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                                        if t2_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                                        span { "{t2_label}" }
-                                    }
+                                    TeamLabel { slot: t2_slot.clone(), label_style: TeamLabelStyle::Short }
                                 }
                                 td { class: "align-middle",
                                     div { class: "d-flex align-items-center flex-wrap gap-1",
-                                        for (ref_display, ref_photo, r_kind, r_label) in &refs_display_list {
-                                            span { class: "d-inline-flex align-items-center gap-1",
-                                                if *r_kind == 0 {
-                                                    if let Some(ph) = ref_photo {
-                                                        img { class: "rounded-circle", style: "width: 1.25em; height: 1.25em; object-fit: cover;", src: "{base_url}/static/{ph}", alt: "" }
-                                                    } else {
-                                                        span { class: "rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.25em; height: 1.25em; font-size: 0.65em; background: #6c757d; color: white;", "{ref_display.chars().next().unwrap_or('?')}" }
-                                                    }
-                                                }
-                                                if *r_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                                                if *r_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                                                span { "{r_label}" }
+                                        for (idx, slot) in refs_slots.iter().enumerate() {
+                                            TeamLabel {
+                                                key: "ref-{idx}",
+                                                slot: slot.clone(),
+                                                label_style: TeamLabelStyle::Short,
                                             }
                                         }
                                     }
@@ -4188,8 +4188,11 @@ struct TimelineEvent {
     team2: String,
     team1_photo: Option<String>,
     team2_photo: Option<String>,
+    team1_slot: TeamSlot,
+    team2_slot: TeamSlot,
     refs_display: String, // ref teams as pseudonyms (comma-separated)
     refs_list: Vec<(String, Option<String>, u8)>, // (display_name, profile_photo, kind)
+    refs_slots: Vec<TeamSlot>,
     start_time: chrono::NaiveDateTime,
     end_time: chrono::NaiveDateTime,
     length_min: i64,
@@ -4209,6 +4212,7 @@ struct TimelineEvent {
     opponent_label: Option<String>,
     opponent_photo: Option<String>,
     opponent_kind: u8,
+    opponent_slot: Option<TeamSlot>,
 }
 
 #[derive(Clone, Debug)]
@@ -4308,13 +4312,6 @@ fn TimelineEventCard(
             .map(|c| format!(" {c}"))
             .unwrap_or_default()
     );
-    let (t1_kind, t1_label) = team_ref_display(&event.team1);
-    let (t2_kind, t2_label) = team_ref_display(&event.team2);
-    let event_refs: Vec<(String, Option<String>, u8, String)> = event
-        .refs_list
-        .iter()
-        .map(|(d, p, k)| (d.clone(), p.clone(), *k, d.clone()))
-        .collect();
     // Started/completed matches stay fully interactive on the editor (click,
     // drag, bulk-select); the server rejects disallowed changes and the
     // existing error alert + refetch handles it. The lock is surfaced as a
@@ -4334,9 +4331,6 @@ fn TimelineEventCard(
         "reffing" => Some(("Reffing", "schedule-role-badge schedule-role-badge--reffing")),
         _ => None,
     };
-    let opp_label = event.opponent_label.clone();
-    let opp_photo = event.opponent_photo.clone();
-    let opp_kind = event.opponent_kind;
     let field_label = event.field_name.clone();
     let start_time_label = event.start_time.format("%H:%M").to_string();
 
@@ -4443,61 +4437,44 @@ fn TimelineEventCard(
                     div { class: "schedule-timeline-event-main",
                         div { class: "schedule-timeline-event-header d-flex align-items-center flex-wrap gap-1",
                             div { class: "schedule-timeline-event-name", "{event.name}" }
-                            if let Some(opp) = opp_label.as_ref() {
+                            if let Some(opp) = event.opponent_slot.clone() {
                                 span { class: "schedule-timeline-event-teams schedule-timeline-inline-vs d-inline-flex align-items-center flex-wrap gap-1",
                                     span { "vs" }
-                                    if opp_kind == 0 {
-                                        if let Some(ph) = &opp_photo {
-                                            img { class: "rounded-circle", style: "width: 1.25em; height: 1.25em; object-fit: cover; flex-shrink: 0;", src: "{base_url}/static/{ph}", alt: "" }
-                                        } else {
-                                            span { class: "team-token-avatar rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.25em; height: 1.25em; font-size: 0.7em; background: #6c757d; color: white; flex-shrink: 0;", "{opp.chars().next().unwrap_or('?')}" }
-                                        }
+                                    TeamLabel {
+                                        slot: opp,
+                                        label_style: TeamLabelStyle::Short,
+                                        stop_click: true,
                                     }
-                                    if opp_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                                    if opp_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                                    span { class: "schedule-opponent-full", "{opp}" }
                                 }
                             }
                             if let Some((role_text, role_class)) = role_badge {
                                 span { class: "{role_class}", "{role_text}" }
                             }
                         }
-                        if opp_label.is_none() {
+                        if event.opponent_slot.is_none() {
                             div { class: "schedule-timeline-event-teams schedule-timeline-event-teams--full d-flex align-items-center flex-wrap gap-1",
-                                span { class: "d-inline-flex align-items-center gap-1",
-                                    if let Some(ph) = &event.team1_photo {
-                                        img { class: "rounded-circle", style: "width: 1.25em; height: 1.25em; object-fit: cover; flex-shrink: 0;", src: "{base_url}/static/{ph}", alt: "" }
-                                    } else if !event.team1.is_empty() {
-                                        span { class: "team-token-avatar rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.25em; height: 1.25em; font-size: 0.7em; background: #6c757d; color: white; flex-shrink: 0;", "{event.team1.chars().next().unwrap_or('?')}" }
-                                    }
-                                    span { class: "schedule-opponent-full", "{event.team1}" }
+                                TeamLabel {
+                                    slot: event.team1_slot.clone(),
+                                    label_style: TeamLabelStyle::Short,
+                                    stop_click: true,
                                 }
                                 span { "vs" }
-                                span { class: "d-inline-flex align-items-center gap-1",
-                                    if let Some(ph) = &event.team2_photo {
-                                        img { class: "rounded-circle", style: "width: 1.25em; height: 1.25em; object-fit: cover; flex-shrink: 0;", src: "{base_url}/static/{ph}", alt: "" }
-                                    } else if !event.team2.is_empty() {
-                                        span { class: "team-token-avatar rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.25em; height: 1.25em; font-size: 0.7em; background: #6c757d; color: white; flex-shrink: 0;", "{event.team2.chars().next().unwrap_or('?')}" }
-                                    }
-                                    span { class: "schedule-opponent-full", "{event.team2}" }
+                                TeamLabel {
+                                    slot: event.team2_slot.clone(),
+                                    label_style: TeamLabelStyle::Short,
+                                    stop_click: true,
                                 }
                             }
                         }
-                        if !event.refs_list.is_empty() {
+                        if !event.refs_slots.is_empty() {
                             div { class: "schedule-timeline-event-refs d-flex align-items-center flex-wrap gap-1 mt-1",
                                 span { class: "me-1", "Refs:" }
-                                for (ref_display, ref_photo, r_kind, r_label) in &event_refs {
-                                    span { class: "d-inline-flex align-items-center gap-1",
-                                        if *r_kind == 0 {
-                                            if let Some(ph) = ref_photo {
-                                                img { class: "rounded-circle", style: "width: 1.15em; height: 1.15em; object-fit: cover;", src: "{base_url}/static/{ph}", alt: "" }
-                                            } else {
-                                                span { class: "team-token-avatar rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.15em; height: 1.15em; font-size: 0.65em; background: #6c757d; color: white;", "{ref_display.chars().next().unwrap_or('?')}" }
-                                            }
-                                        }
-                                        if *r_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                                        if *r_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                                        span { "{r_label}" }
+                                for (idx, slot) in event.refs_slots.iter().enumerate() {
+                                    TeamLabel {
+                                        key: "tref-{idx}",
+                                        slot: slot.clone(),
+                                        label_style: TeamLabelStyle::Short,
+                                        stop_click: true,
                                     }
                                 }
                             }
@@ -4513,47 +4490,27 @@ fn TimelineEventCard(
                     div { class: "schedule-timeline-event-name", "{event.name}" }
                 }
                 div { class: "schedule-timeline-event-teams d-flex align-items-center flex-wrap gap-1",
-                    span { class: "d-inline-flex align-items-center gap-1",
-                        if t1_kind == 0 {
-                            if let Some(ph) = &event.team1_photo {
-                                img { class: "rounded-circle", style: "width: 1.25em; height: 1.25em; object-fit: cover;", src: "{base_url}/static/{ph}", alt: "" }
-                            } else {
-                                span { class: "team-token-avatar rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.25em; height: 1.25em; font-size: 0.7em; background: #6c757d; color: white;", "{event.team1.chars().next().unwrap_or('?')}" }
-                            }
-                        }
-                        if t1_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                        if t1_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                        span { "{t1_label}" }
+                    TeamLabel {
+                        slot: event.team1_slot.clone(),
+                        label_style: TeamLabelStyle::Short,
+                        stop_click: true,
                     }
                     span { " vs " }
-                    span { class: "d-inline-flex align-items-center gap-1",
-                        if t2_kind == 0 {
-                            if let Some(ph) = &event.team2_photo {
-                                img { class: "rounded-circle", style: "width: 1.25em; height: 1.25em; object-fit: cover;", src: "{base_url}/static/{ph}", alt: "" }
-                            } else {
-                                span { class: "team-token-avatar rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.25em; height: 1.25em; font-size: 0.7em; background: #6c757d; color: white;", "{event.team2.chars().next().unwrap_or('?')}" }
-                            }
-                        }
-                        if t2_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                        if t2_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                        span { "{t2_label}" }
+                    TeamLabel {
+                        slot: event.team2_slot.clone(),
+                        label_style: TeamLabelStyle::Short,
+                        stop_click: true,
                     }
                 }
-                if !event.refs_list.is_empty() {
+                if !event.refs_slots.is_empty() {
                     div { class: "schedule-timeline-event-refs d-flex align-items-center flex-wrap gap-1 mt-1",
                         span { class: "me-1", "Refs:" }
-                        for (ref_display, ref_photo, r_kind, r_label) in &event_refs {
-                            span { class: "d-inline-flex align-items-center gap-1",
-                                if *r_kind == 0 {
-                                    if let Some(ph) = ref_photo {
-                                        img { class: "rounded-circle", style: "width: 1.1em; height: 1.1em; object-fit: cover;", src: "{base_url}/static/{ph}", alt: "" }
-                                    } else {
-                                        span { class: "team-token-avatar rounded-circle d-inline-flex align-items-center justify-content-center", style: "width: 1.1em; height: 1.1em; font-size: 0.65em; background: #6c757d; color: white;", "{ref_display.chars().next().unwrap_or('?')}" }
-                                    }
-                                }
-                                if *r_kind == 1 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/tag.svg", alt: "Tag" } }
-                                if *r_kind == 2 { img { class: "team-token-icon icon-primary-svg", src: "{base_url}/static/reference.svg", alt: "Reference" } }
-                                span { "{r_label}" }
+                        for (idx, slot) in event.refs_slots.iter().enumerate() {
+                            TeamLabel {
+                                key: "fref-{idx}",
+                                slot: slot.clone(),
+                                label_style: TeamLabelStyle::Short,
+                                stop_click: true,
                             }
                         }
                     }
@@ -5366,6 +5323,31 @@ fn ScheduleTimeline(
             } else {
                 (None, None, 0)
             };
+            let team1_slot = team_slot_for(
+                m.team1.as_deref(),
+                m.team1_initial.as_deref(),
+                &data.team_options,
+            );
+            let team2_slot = team_slot_for(
+                m.team2.as_deref(),
+                m.team2_initial.as_deref(),
+                &data.team_options,
+            );
+            let refs_slots: Vec<TeamSlot> = ref_toks
+                .iter()
+                .map(|token| team_slot_from_token(token, &data.team_options))
+                .collect();
+            let opponent_slot = if playing {
+                if m.team1.as_deref() == Some(focus_team_id.as_str()) {
+                    Some(team2_slot.clone())
+                } else if m.team2.as_deref() == Some(focus_team_id.as_str()) {
+                    Some(team1_slot.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             Some(TimelineEvent {
                 id: m.uuid.clone(),
@@ -5374,8 +5356,11 @@ fn ScheduleTimeline(
                 team2: t2,
                 team1_photo,
                 team2_photo,
+                team1_slot,
+                team2_slot,
                 refs_display,
                 refs_list,
+                refs_slots,
                 start_time: start_dt,
                 end_time: end_dt,
                 length_min,
@@ -5393,6 +5378,7 @@ fn ScheduleTimeline(
                 opponent_label,
                 opponent_photo,
                 opponent_kind,
+                opponent_slot,
             })
         })
         .collect();

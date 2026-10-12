@@ -33,7 +33,11 @@ from app.domain.enums import (
     TeamRegistrationStatus,
 )
 from app.serializers.registration_serializer import player_reg_waiver_api, serialize_manage
-from app.serializers.tournament_serializer import team_name_for_match, tournament_to_dict
+from app.serializers.tournament_serializer import (
+    team_name_for_match,
+    team_shortname_for_match,
+    tournament_to_dict,
+)
 from app.utils.datetime_helpers import dt_iso
 from app.serializers.league_serializer import league_to_dict, require_league
 from app.services._common import Scope, current_user_type
@@ -352,6 +356,8 @@ def league_results_team_matches(league_url, team_id):
                 "name": m.name,
                 "team1_name": team1_name,
                 "team2_name": team2_name,
+                "team1_shortname": team_shortname_for_match(tournament, m, "team1"),
+                "team2_shortname": team_shortname_for_match(tournament, m, "team2"),
                 "match_winner": m.match_winner.value if m.match_winner else None,
                 "your_side": your_side,
                 "sets": sets_list,

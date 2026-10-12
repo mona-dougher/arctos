@@ -11,6 +11,8 @@ mod league_penalty_types_table;
 mod league_registration_buttons;
 mod penalty_display;
 mod markdown;
+mod results_games_table;
+mod team_label;
 mod team_token_input;
 
 pub use ass_entry::AssEntry;
@@ -24,4 +26,6 @@ pub use league_penalty_types_table::LeaguePenaltyTypesTable;
 pub use league_registration_buttons::LeagueRegistrationButtons;
 pub use penalty_display::PenaltyDisplay;
 pub use markdown::Markdown;
+pub use results_games_table::{ResultsGamesTable, rows_for_team};
+pub use team_label::{TeamLabel, TeamLabelStyle, TeamSlot};
 pub use team_token_input::{all_tokens_known, resolve_value_to_team_ids, TeamSelectionField, TeamTokenInput};

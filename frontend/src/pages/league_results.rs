@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::{ResultsGamesTable, rows_for_team};
 use crate::Route;
 use dioxus::prelude::*;
 use std::cmp::Ordering;
@@ -213,8 +214,7 @@ pub fn LeagueResults(league_url: String) -> Element {
                                         if is_expanded {
                                             tr {
                                                 key: "{tid}-detail",
-                                                td { colspan: 4, class: "p-0 bg-light",
-                                                    div { class: "p-3",
+                                                td { colspan: 4, class: "p-0 bg-light results-games-cell",
                                                         match team_matches_cache().get(&tid) {
                                                             None | Some(None) => rsx! { p { class: "text-muted mb-0", "Loading…" } },
                                                             Some(Some(Err(e))) => rsx! { p { class: "text-danger mb-0", "{e}" } },
@@ -223,129 +223,24 @@ pub fn LeagueResults(league_url: String) -> Element {
                                                                 .matches
                                                                 .iter()
                                                                 .filter(|m| include_ribbon() || !m.ribbon)
+                                                                .cloned()
                                                                 .collect();
-                                                            let max_sets = visible_matches
-                                                                .iter()
-                                                                .map(|m| m.sets.len())
-                                                                .max()
-                                                                .unwrap_or(0)
-                                                                .max(1);
+                                                            let game_rows = rows_for_team(
+                                                                &visible_matches,
+                                                                row_team.profile_photo.clone(),
+                                                                &results_data.teams,
+                                                                |m| m.event.clone().unwrap_or_default(),
+                                                            );
+                                                            let max_sets = game_rows.iter().map(|r| r.top_sets.len().max(r.bottom_sets.len())).max().unwrap_or(1);
                                                             rsx! {
-                                                                if visible_matches.is_empty() {
-                                                                    p { class: "text-muted mb-0", "No matches in this league yet." }
+                                                                if game_rows.is_empty() {
+                                                                    p { class: "text-muted mb-0 p-3", "No matches in this league yet." }
                                                                 } else {
-                                                                    div { class: "table-responsive",
-                                                                        table { class: "table table-sm table-bordered mb-0", style: "table-layout: fixed;",
-                                                                            colgroup {
-                                                                                col { style: "min-width: 200px; width: 35%;" }
-                                                                                col { style: "width: 80px;" }
-                                                                                col { style: "min-width: 120px;" }
-                                                                                for _ in 0..max_sets {
-                                                                                    col { style: "width: 36px;" }
-                                                                                }
-                                                                            }
-                                                                            thead {
-                                                                                tr {
-                                                                                    th { class: "text-start", "Match" }
-                                                                                    th { "Result" }
-                                                                                    th { class: "text-start", "Team" }
-                                                                                    for set_idx in 0..max_sets {
-                                                                                        th { class: "text-start", style: "width: 36px;", "Set {set_idx + 1}" }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                            tbody {
-                                                                                for game_row in visible_matches.iter() {
-                                                                                    {
-                                                                                        let match_url = game_row.event.as_deref().unwrap_or("").to_string();
-                                                                                        let team_won = game_row.match_winner.as_deref() == game_row.your_side.as_deref();
-                                                                                        let result_class = if team_won { "text-success" } else { "text-danger" };
-                                                                                        let result_text = if team_won { "W" } else { "L" };
-                                                                                        let our_first = game_row.your_side.as_deref() != Some("TEAM2");
-                                                                                        let (row1_name, row1_sets, row2_name, row2_sets) = if our_first {
-                                                                                            (
-                                                                                                game_row.team1_name.as_str(),
-                                                                                                game_row.sets.iter().map(|s| s.team1_points).collect::<Vec<_>>(),
-                                                                                                game_row.team2_name.as_str(),
-                                                                                                game_row.sets.iter().map(|s| s.team2_points).collect::<Vec<_>>(),
-                                                                                            )
-                                                                                        } else {
-                                                                                            (
-                                                                                                game_row.team2_name.as_str(),
-                                                                                                game_row.sets.iter().map(|s| s.team2_points).collect::<Vec<_>>(),
-                                                                                                game_row.team1_name.as_str(),
-                                                                                                game_row.sets.iter().map(|s| s.team1_points).collect::<Vec<_>>(),
-                                                                                            )
-                                                                                        };
-                                                                                        rsx! {
-                                                                                    tr { key: "{game_row.uuid}-1",
-                                                                                        td { rowspan: 2, class: "text-start align-top",
-                                                                                            span { class: "d-inline-flex align-items-center gap-1",
-                                                                                                Link {
-                                                                                                    to: Route::MatchPageById { url: match_url.clone(), match_id: game_row.uuid.clone() },
-                                                                                                    class: "text-decoration-none",
-                                                                                                    onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
-                                                                                                    "{game_row.name}"
-                                                                                                }
-                                                                                                if game_row.ribbon {
-                                                                                                    span {
-                                                                                                        class: "d-inline-flex align-items-center ms-1",
-                                                                                                        title: "Ribbon game",
-                                                                                                        img {
-                                                                                                            src: "{backend}/static/ribbon.svg",
-                                                                                                            alt: "Ribbon game",
-                                                                                                            style: "width: 1em; height: 1em; object-fit: contain; vertical-align: middle; filter: invert(27%) sepia(98%) saturate(2476%) hue-rotate(226deg) brightness(99%) contrast(101%);"
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                        td { rowspan: 2, class: "align-top {result_class}", strong { "{result_text}" } }
-                                                                                        td { class: "text-muted text-start",
-                                                                                            if let Some(ph) = &row_team.profile_photo {
-                                                                                                img { src: "{backend}/static/{ph}", alt: "", class: "rounded-circle me-1", style: "width: 18px; height: 18px; object-fit: cover;" }
-                                                                                            } else {
-                                                                                                span { class: "d-inline-block rounded-circle me-1 bg-secondary text-white text-center", style: "width: 18px; height: 18px; line-height: 18px; font-size: 10px;", "👥" }
-                                                                                            }
-                                                                                            span { "{row1_name}" }
-                                                                                        }
-                                                                                        for i in 0..max_sets {
-                                                                                            td { class: "text-start", style: "width: 36px;",
-                                                                                                "{row1_sets.get(i).copied().unwrap_or(0)}"
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                                    tr {
-                                                                                        td { class: "text-muted text-start",
-                                                                                            if let Some(ph) = results_data
-                                                                                                .teams
-                                                                                                .iter()
-                                                                                                .find(|t| t.pseudonym == row2_name)
-                                                                                                .and_then(|t| t.profile_photo.as_ref())
-                                                                                            {
-                                                                                                img { src: "{backend}/static/{ph}", alt: "", class: "rounded-circle me-1", style: "width: 18px; height: 18px; object-fit: cover;" }
-                                                                                            } else {
-                                                                                                span { class: "d-inline-block rounded-circle me-1 bg-secondary text-white text-center", style: "width: 18px; height: 18px; line-height: 18px; font-size: 10px;", "👥" }
-                                                                                            }
-                                                                                            span { "{row2_name}" }
-                                                                                        }
-                                                                                        for i in 0..max_sets {
-                                                                                            td { class: "text-start", style: "width: 36px;",
-                                                                                                "{row2_sets.get(i).copied().unwrap_or(0)}"
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
+                                                                    ResultsGamesTable { rows: game_rows, max_sets }
                                                                 }
                                                             }
                                                             }
                                                         }
-                                                    }
                                                 }
                                             }
                                         }

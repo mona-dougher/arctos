@@ -37,6 +37,17 @@ def _frontend_path(path: str = "") -> str:
     return f"{base}{suffix}" or _SPA_BASE
 
 
+def _login_persistent(user):
+    """Sign in and keep the session after the browser closes.
+
+    A non-permanent session cookie is dropped whenever the browser discards
+    session cookies (tab close, mobile reclaim, short inactivity). The
+    permanent session and Flask-Login remember cookie last a year.
+    """
+    session.permanent = True
+    login_user(user, remember=True)
+
+
 def _redirect_to_frontend(path: str = ""):
     """Build a Flask redirect response targeting the frontend SPA.
 
@@ -188,7 +199,7 @@ def google_callback():
             user = Team.query.filter_by(google_id=google_id).first()
 
         if user:
-            login_user(user)
+            _login_persistent(user)
             flash("Successfully logged in with Google!", "success")
             return _redirect_to_frontend("/")
 
@@ -233,7 +244,7 @@ def login():
         user = Team.query.filter_by(id=username).first()
     if not user or not user.check_password(password):
         return jsonify({"error": "Invalid username or password"}), 401
-    login_user(user)
+    _login_persistent(user)
     return jsonify(user_json())
 
 
@@ -303,7 +314,7 @@ def register():
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
-    login_user(user)
+    _login_persistent(user)
     return jsonify(user_json())
 
 
@@ -420,7 +431,7 @@ def google_complete_profile_api():
         db.session.add(user)
         db.session.commit()
         session.pop("google_oauth_data", None)
-        login_user(user)
+        _login_persistent(user)
         return jsonify({"ok": True})
 
     return jsonify(

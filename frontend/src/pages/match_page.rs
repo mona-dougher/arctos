@@ -1,6 +1,8 @@
 use crate::Route;
 use crate::api;
-use crate::components::{PenaltyDisplay, all_tokens_known, resolve_value_to_team_ids};
+use crate::components::{
+    PenaltyDisplay, TeamLabel, TeamLabelStyle, TeamSlot, all_tokens_known, resolve_value_to_team_ids,
+};
 use crate::display::short_or_truncate;
 use crate::pages::TeamSelectionField;
 use crate::time_format::format_match_display_local;
@@ -406,24 +408,93 @@ fn compute_stones_remaining(
     "??".to_string()
 }
 
-/// Parse team display name to check if it's a match reference (e.g., "MatchName::winner" or "MatchName winner")
-fn parse_team_reference(display: &str) -> Option<(String, String)> {
-    // Check for "::winner" or "::loser"
-    if let Some(pos) = display.find("::") {
-        let match_name = display[..pos].to_string();
-        let suffix = display[pos..].to_string();
-        if suffix == "::winner" || suffix == "::loser" {
-            return Some((match_name, display.replace("::", " ")));
-        }
+fn side_slot(
+    team_id: &Option<String>,
+    name: &str,
+    initial: &Option<String>,
+    shortname: &Option<String>,
+    photo: &Option<String>,
+) -> TeamSlot {
+    let team_id = team_id.clone().filter(|s| !s.trim().is_empty());
+    let token = initial
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| team_id.clone())
+        .unwrap_or_else(|| name.to_string());
+    TeamSlot {
+        token,
+        team_id,
+        name: Some(name.to_string()).filter(|s| !s.trim().is_empty()),
+        shortname: shortname.clone().filter(|s| !s.trim().is_empty()),
+        photo: photo.clone().filter(|s| !s.trim().is_empty()),
     }
-    // Check for " winner" or " loser" at the end
-    if display.ends_with(" winner") || display.ends_with(" loser") {
-        if let Some(pos) = display.rfind(' ') {
-            let match_name = display[..pos].to_string();
-            return Some((match_name, display.to_string()));
-        }
+}
+
+fn ref_api_slot(slot: &crate::types::RefSlot) -> TeamSlot {
+    let team_id = slot.team_id.clone().filter(|s| !s.trim().is_empty());
+    let token = slot
+        .initial
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| team_id.clone())
+        .or_else(|| slot.name.clone())
+        .unwrap_or_default();
+    TeamSlot {
+        token,
+        team_id,
+        name: slot.name.clone().filter(|s| !s.trim().is_empty()),
+        shortname: slot.shortname.clone().filter(|s| !s.trim().is_empty()),
+        photo: slot.photo.clone().filter(|s| !s.trim().is_empty()),
     }
-    None
+}
+
+fn fallback_ref_slots(m: &MatchDetailData) -> Vec<TeamSlot> {
+    let resolved: Vec<&str> = m
+        .r#refs
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let initial: Vec<&str> = m
+        .r#refs_initial
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let display: Vec<&str> = m
+        .refs_display
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let n = resolved.len().max(initial.len()).max(display.len());
+    let mut out = Vec::new();
+    for i in 0..n {
+        let id = resolved.get(i).copied().unwrap_or("");
+        let init = initial.get(i).copied().unwrap_or("");
+        let name = display.get(i).copied().unwrap_or("");
+        if id.is_empty() && init.is_empty() && name.is_empty() {
+            continue;
+        }
+        let token = if !init.is_empty() {
+            init
+        } else if !id.is_empty() {
+            id
+        } else {
+            name
+        };
+        out.push(TeamSlot {
+            token: token.to_string(),
+            team_id: if id.is_empty() { None } else { Some(id.to_string()) },
+            name: if name.is_empty() { None } else { Some(name.to_string()) },
+            shortname: None,
+            photo: None,
+        });
+    }
+    out
 }
 
 // CSS for TeamTokenInput in Force Start modal (same as schedule page)
@@ -1640,10 +1711,25 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                     }
                 }
             });
-                // Refs by pseudonym (refs_display), same as teams; fallback to refs_initial then refs
-                let reflist_str = d.match_data.refs_display.as_deref()
-                    .or(d.match_data.r#refs_initial.as_deref())
-                    .or(d.match_data.r#refs.as_deref());
+                let team1_slot = side_slot(
+                    &d.match_data.team1,
+                    &d.match_data.team1_name,
+                    &d.match_data.team1_initial,
+                    &d.match_data.team1_shortname,
+                    &d.match_data.team1_photo,
+                );
+                let team2_slot = side_slot(
+                    &d.match_data.team2,
+                    &d.match_data.team2_name,
+                    &d.match_data.team2_initial,
+                    &d.match_data.team2_shortname,
+                    &d.match_data.team2_photo,
+                );
+                let ref_slots: Vec<TeamSlot> = if d.match_data.refs_slots.is_empty() {
+                    fallback_ref_slots(&d.match_data)
+                } else {
+                    d.match_data.refs_slots.iter().map(ref_api_slot).collect()
+                };
                 let match_title = format!("{} | Arctos", d.match_data.name);
                 rsx! {
                     Title { "{match_title}" }
@@ -1687,115 +1773,39 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                         div { class: "card-body",
                             div { class: "row",
                                 div { class: "col-md-4",
-                                    div { class: "d-flex align-items-center mb-2",
+                                    div { class: "d-flex align-items-center flex-wrap gap-1 mb-2",
                                         strong { class: "me-2", "Teams:" }
-                                        div {
-                                            // Team 1
-                                            if let Some((match_name, display_text)) = parse_team_reference(
-                                                &d.match_data.team1_name,
-                                            )
-                                            {
-                                                Link {
-                                                    to: Route::MatchPage {
-                                                        url: url.clone(),
-                                                    },
-                                                    class: "text-decoration-none",
-                                                    "{display_text}"
-                                                }
-                                            } else if let Some(team1_id) = &d.match_data.team1 {
-                                                Link {
-                                                    to: Route::TeamProfilePage {
-                                                        id: team1_id.clone(),
-                                                    },
-                                                    class: "text-decoration-none",
-                                                    "{d.match_data.team1_name}"
-                                                }
-                                            } else {
-                                                span { "{d.match_data.team1_name}" }
-                                            }
-                                            if d.match_data.status == "COMPLETED"
-                                                && d.match_data.match_winner.as_deref() == Some("TEAM1")
-                                            {
-                                                span { class: "badge bg-success ms-2",
-                                                    "Winner"
-                                                }
-                                            }
-                                            span { class: "mx-2", "vs" }
-                                            // Team 2
-                                            if let Some((match_name, display_text)) = parse_team_reference(
-                                                &d.match_data.team2_name,
-                                            )
-                                            {
-                                                Link {
-                                                    to: Route::MatchPage {
-                                                        url: url.clone(),
-                                                    },
-                                                    class: "text-decoration-none",
-                                                    "{display_text}"
-                                                }
-                                            } else if let Some(team2_id) = &d.match_data.team2 {
-                                                Link {
-                                                    to: Route::TeamProfilePage {
-                                                        id: team2_id.clone(),
-                                                    },
-                                                    class: "text-decoration-none",
-                                                    "{d.match_data.team2_name}"
-                                                }
-                                            } else {
-                                                span { "{d.match_data.team2_name}" }
-                                            }
-                                            if d.match_data.status == "COMPLETED"
-                                                && d.match_data.match_winner.as_deref() == Some("TEAM2")
-                                            {
-                                                span { class: "badge bg-success ms-2",
-                                                    "Winner"
-                                                }
-                                            }
+                                        TeamLabel {
+                                            slot: team1_slot.clone(),
+                                            label_style: TeamLabelStyle::Full,
+                                        }
+                                        if d.match_data.status == "COMPLETED"
+                                            && d.match_data.match_winner.as_deref() == Some("TEAM1")
+                                        {
+                                            span { class: "badge bg-success", "Winner" }
+                                        }
+                                        span { class: "mx-1", "vs" }
+                                        TeamLabel {
+                                            slot: team2_slot.clone(),
+                                            label_style: TeamLabelStyle::Full,
+                                        }
+                                        if d.match_data.status == "COMPLETED"
+                                            && d.match_data.match_winner.as_deref() == Some("TEAM2")
+                                        {
+                                            span { class: "badge bg-success", "Winner" }
                                         }
                                     }
-                                    // Refs display (by pseudonym, same as teams)
-                                    if let Some(refs_list) = reflist_str {
-                                        if !refs_list.is_empty() {
-                                            div { class: "d-flex align-items-center mb-2",
-                                                strong { class: "me-2", "Refs:" }
-                                                span {
-                                                    {
-                                                        refs_list.split(',')
-                                                            .filter_map(|ref_trimmed| {
-                                                                let ref_trimmed = ref_trimmed.trim();
-                                                                if ref_trimmed.is_empty() {
-                                                                    return None;
-                                                                }
-                                                                Some(ref_trimmed)
-                                                            })
-                                                            .enumerate()
-                                                            .map(|(idx, ref_trimmed)| {
-                                                                let refs_vec: Vec<&str> = refs_list
-                                                                    .split(',')
-                                                                    .filter(|s| !s.trim().is_empty())
-                                                                    .collect();
-                                                                let is_last = idx == refs_vec.len() - 1;
-                                                                rsx! {
-                                                                    if let Some((match_name, display_text)) = parse_team_reference(ref_trimmed) {
-                                                                        Link {
-                                                                            to: Route::MatchPage {
-                                                                                url: url.clone(),
-                                                                            },
-                                                                            class: "text-decoration-none",
-                                                                            "{display_text}"
-                                                                        }
-                                                                        if !is_last {
-                                                                            ", "
-                                                                        }
-                                                                    } else {
-                                                                        span { "{ref_trimmed}" }
-                                                                        if !is_last {
-                                                                            ", "
-                                                                        }
-                                                                    }
-                                                                }
-                                                            })
-                                                    }
+                                    if !ref_slots.is_empty() {
+                                        div { class: "d-flex align-items-center flex-wrap gap-1 mb-2",
+                                            strong { class: "me-2", "Refs:" }
+                                            for (idx, slot) in ref_slots.iter().enumerate() {
+                                                TeamLabel {
+                                                    key: "ref-{idx}",
+                                                    slot: slot.clone(),
+                                                    label_style: TeamLabelStyle::Full,
+                                                }
+                                                if idx + 1 != ref_slots.len() {
+                                                    span { ", " }
                                                 }
                                             }
                                         }
@@ -2220,12 +2230,20 @@ fn match_page_inner(url: String, match_id: Option<String>, match_name: Option<St
                                                                         }
                                                                     }
                                                                     td {
-                                                                        {
-                                                                            match pt.winner.as_deref() {
-                                                                                Some("TEAM1") => d.match_data.team1_name.clone(),
-                                                                                Some("TEAM2") => d.match_data.team2_name.clone(),
-                                                                                _ => "-".to_string(),
-                                                                            }
+                                                                        match pt.winner.as_deref() {
+                                                                            Some("TEAM1") => rsx! {
+                                                                                TeamLabel {
+                                                                                    slot: team1_slot.clone(),
+                                                                                    label_style: TeamLabelStyle::Short,
+                                                                                }
+                                                                            },
+                                                                            Some("TEAM2") => rsx! {
+                                                                                TeamLabel {
+                                                                                    slot: team2_slot.clone(),
+                                                                                    label_style: TeamLabelStyle::Short,
+                                                                                }
+                                                                            },
+                                                                            _ => rsx! { span { "-" } },
                                                                         }
                                                                     }
                                                                     td {

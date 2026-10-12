@@ -119,3 +119,17 @@ def team_name_for_match(tournament, match, team_key):
         return reg.pseudonym
     t = Team.query.get(team_id)
     return t.name if t else team_id
+
+
+def team_shortname_for_match(tournament, match, team_key):
+    """Registration shortname for a match side, or None when unset."""
+    from app.services.registration_resolver import team_registration_for_tournament
+
+    team_id = getattr(match, team_key)
+    if not team_id:
+        return None
+    reg = team_registration_for_tournament(tournament, team_id)
+    shortname = reg.shortname if reg else None
+    if shortname and str(shortname).strip():
+        return shortname
+    return None
