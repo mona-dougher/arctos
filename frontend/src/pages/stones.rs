@@ -85,6 +85,36 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
             media_dest: None,
         }))
     });
+    // Bytes and decoded buffers for every built-in stone. Filled once when the
+    // file list arrives, then play / pause / sound switches use this copy.
+    let stone_library = use_signal(|| Rc::new(RefCell::new(StoneLibrary::default())));
+
+    // Download and decode every built-in stone as soon as the list is known,
+    // so later play and sound changes do not touch the network.
+    use_effect(move || {
+        let filenames = {
+            let guard = stones_val.read();
+            let Some(Ok(data)) = guard.as_ref() else {
+                return;
+            };
+            data.stones
+                .iter()
+                .map(|stone| stone.filename_encoded.clone())
+                .collect::<Vec<_>>()
+        };
+        let library = stone_library.read().clone();
+        let mut audio_ctx = audio_ctx;
+        let mut ctx_start_time = ctx_start_time;
+        spawn(async move {
+            let ctx = match ensure_audio_context(audio_ctx, ctx_start_time, &library) {
+                Ok(ctx) => ctx,
+                Err(_) => return,
+            };
+            for name in filenames {
+                let _ = cached_audio_buffer(&ctx, &name, &library).await;
+            }
+        });
+    });
 
     // Schedule loop when playing
     use_effect(move || {
@@ -208,10 +238,12 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                 custom_status.set(Some("Please upload a custom audio file first.".into()));
                 return;
             }
+            let library = stone_library.read().clone();
             let ctx = match prepare_playback_context(
                 audio_ctx,
                 ctx_start_time,
                 schedule_state.clone(),
+                &library,
             ) {
                 Ok(c) => c,
                 Err(msg) => {
@@ -236,6 +268,7 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                     custom_status,
                     ctx,
                     schedule_state,
+                    library,
                 )
                 .await;
             });
@@ -283,7 +316,6 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
 
     let stones_ok = stones_val.read().as_ref().and_then(|r| r.as_ref().ok()).cloned();
     let stones_len = stones_ok.as_ref().map(|s| s.stones.len()).unwrap_or(0);
-    let base_url = api::base_url();
     let quality = time_sync.quality();
     let calibration = time_sync.calibration();
     let offset_str = format!("{:.1} ms", quality.offset_ms);
@@ -361,8 +393,8 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                             let display_name = sound_btn.display_name.clone();
                                             let idx = sound_btn.index;
                                             let filename_encoded = sound_btn.filename_encoded.clone();
-                                            let base_url = base_url.clone();
                                             let is_selected = selected_index() == idx;
+                                            let stone_library = stone_library;
                                             rsx! {
                                                 button {
                                                     key: "{key_name}",
@@ -372,19 +404,23 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                                             clear_future_scheduled(schedule_state.read().clone(), &ctx);
                                                         }
                                                         selected_index.set(idx);
-                                                        audio_buffer.set(None);
-                                                        let base = base_url.clone();
                                                         let filename = filename_encoded.clone();
-                                                        let audio_ctx = audio_ctx.clone();
-                                                        let mut audio_buffer = audio_buffer.clone();
-                                                        spawn(async move {
-                                                            if let Some(ctx) = audio_ctx.read().clone() {
-                                                                let url = format!("{}/static/stones/{}", base, filename);
-                                                                if let Ok(buf) = load_audio_buffer(&ctx, &url).await {
-                                                                    audio_buffer.set(Some(buf));
+                                                        let library = stone_library.read().clone();
+                                                        let cached = library.borrow().buffers.get(&filename).cloned();
+                                                        if let Some(buf) = cached {
+                                                            audio_buffer.set(Some(buf));
+                                                        } else if let Some(ctx) = audio_ctx.read().clone() {
+                                                            audio_buffer.set(None);
+                                                            let mut audio_buffer = audio_buffer;
+                                                            let mut selected_index = selected_index;
+                                                            spawn(async move {
+                                                                if let Ok(buf) = cached_audio_buffer(&ctx, &filename, &library).await {
+                                                                    if selected_index() == idx {
+                                                                        audio_buffer.set(Some(buf));
+                                                                    }
                                                                 }
-                                                            }
-                                                        });
+                                                            });
+                                                        }
                                                     },
                                                     "{display_name}"
                                                 }
@@ -516,7 +552,12 @@ fn StonesPlayerWasm(stones_val: ReadSignal<Option<Result<StonesResponse, String>
                                 div {
                                     class: if beat_flash() { "stones-beat-dot stones-beat-dot-on" } else { "stones-beat-dot" },
                                 }
-                                span { class: "form-text mt-2 text-center", "this should light up on the stone beat" }
+                                span { class: "form-text mt-2 text-center",
+				       "this should light up when " strong {
+					   if calibration_step()==1 { "this device plays" }
+					   else { "other devices play" }
+				       } " a stone"
+				}
                             }
 
                             if calibration_step() == 1 {
@@ -663,28 +704,66 @@ struct ScheduleState {
     media_dest: Option<web_sys::MediaStreamAudioDestinationNode>,
 }
 
+/// Built-in stone files kept in memory after the first download.
 #[cfg(target_arch = "wasm32")]
-fn prepare_playback_context(
+struct StoneLibrary {
+    bytes: HashMap<String, Vec<u8>>,
+    buffers: HashMap<String, web_sys::AudioBuffer>,
+    /// Filenames whose download or decode is already running.
+    inflight: HashSet<String>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Default for StoneLibrary {
+    fn default() -> Self {
+        Self {
+            bytes: HashMap::new(),
+            buffers: HashMap::new(),
+            inflight: HashSet::new(),
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn ensure_audio_context(
     mut audio_ctx: Signal<Option<web_sys::AudioContext>>,
     mut ctx_start_time: Signal<Option<f64>>,
-    schedule_state: Signal<Rc<RefCell<ScheduleState>>>,
+    library: &Rc<RefCell<StoneLibrary>>,
 ) -> Result<web_sys::AudioContext, String> {
     let existing = audio_ctx.read().clone();
     let needs_new = match &existing {
         None => true,
-        Some(c) => c.state() == web_sys::AudioContextState::Closed,
+        Some(ctx) => ctx.state() == web_sys::AudioContextState::Closed,
     };
-    let ctx = if needs_new {
+    if !needs_new {
+        return Ok(existing.unwrap());
+    }
+    // Decoded buffers belong to the context that created them.
+    library.borrow_mut().buffers.clear();
+    let opts = web_sys::AudioContextOptions::new();
+    let ctx = web_sys::AudioContext::new_with_context_options(&opts)
+        .map_err(|_| "Could not create audio context. Try again.".to_string())?;
+    ctx_start_time.set(Some(js_sys::Date::now() / 1000.0));
+    audio_ctx.set(Some(ctx.clone()));
+    Ok(ctx)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn prepare_playback_context(
+    audio_ctx: Signal<Option<web_sys::AudioContext>>,
+    ctx_start_time: Signal<Option<f64>>,
+    schedule_state: Signal<Rc<RefCell<ScheduleState>>>,
+    library: &Rc<RefCell<StoneLibrary>>,
+) -> Result<web_sys::AudioContext, String> {
+    let existing = audio_ctx.read().clone();
+    let needs_new = match &existing {
+        None => true,
+        Some(ctx) => ctx.state() == web_sys::AudioContextState::Closed,
+    };
+    if needs_new {
         schedule_state.read().borrow_mut().media_dest = None;
-        let opts = web_sys::AudioContextOptions::new();
-        let c = web_sys::AudioContext::new_with_context_options(&opts)
-            .map_err(|_| "Could not create audio context. Try again.".to_string())?;
-        ctx_start_time.set(Some(js_sys::Date::now() / 1000.0));
-        audio_ctx.set(Some(c.clone()));
-        c
-    } else {
-        existing.unwrap()
-    };
+    }
+    let ctx = ensure_audio_context(audio_ctx, ctx_start_time, library)?;
     if ctx.state() != web_sys::AudioContextState::Running {
         let _ = ctx.resume();
     }
@@ -979,6 +1058,7 @@ async fn init_and_start_playback(
     mut custom_status: Signal<Option<String>>,
     ctx: web_sys::AudioContext,
     schedule_state: Signal<Rc<RefCell<ScheduleState>>>,
+    library: Rc<RefCell<StoneLibrary>>,
 ) {
     if ctx.state() != web_sys::AudioContextState::Running {
         let promise = match ctx.resume() {
@@ -1009,17 +1089,14 @@ async fn init_and_start_playback(
     } else {
         let stone = stones.as_ref().and_then(|s| s.stones.get(selected_index));
         match stone {
-            Some(s) => {
-                let url = format!("{}/static/stones/{}", api::base_url(), s.filename_encoded);
-                match load_audio_buffer(&ctx, &url).await {
-                    Ok(b) => Some(b),
-                    Err(e) => {
-                        custom_status.set(Some(format!("Failed to load audio: {}", e)));
-                        set_media_session_playing(false);
-                        return;
-                    }
+            Some(s) => match cached_audio_buffer(&ctx, &s.filename_encoded, &library).await {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    custom_status.set(Some(format!("Failed to load audio: {}", e)));
+                    set_media_session_playing(false);
+                    return;
                 }
-            }
+            },
             None => {
                 custom_status.set(Some("No sound selected.".into()));
                 set_media_session_playing(false);
@@ -1036,16 +1113,78 @@ async fn init_and_start_playback(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn load_audio_buffer(
+enum CacheStep {
+    Ready(web_sys::AudioBuffer),
+    Wait,
+    Decode(Vec<u8>),
+    Fetch,
+}
+
+/// Return the decoded buffer for a built-in stone, downloading its bytes at most once.
+#[cfg(target_arch = "wasm32")]
+async fn cached_audio_buffer(
     ctx: &web_sys::AudioContext,
-    url: &str,
+    filename: &str,
+    library: &Rc<RefCell<StoneLibrary>>,
+) -> Result<web_sys::AudioBuffer, String> {
+    loop {
+        let step = {
+            let mut lib = library.borrow_mut();
+            if let Some(buf) = lib.buffers.get(filename).cloned() {
+                CacheStep::Ready(buf)
+            } else if lib.inflight.contains(filename) {
+                CacheStep::Wait
+            } else {
+                let bytes = lib.bytes.get(filename).cloned();
+                lib.inflight.insert(filename.to_string());
+                match bytes {
+                    Some(bytes) => CacheStep::Decode(bytes),
+                    None => CacheStep::Fetch,
+                }
+            }
+        };
+        match step {
+            CacheStep::Ready(buf) => return Ok(buf),
+            CacheStep::Wait => {
+                gloo_timers::future::TimeoutFuture::new(40).await;
+            }
+            CacheStep::Decode(bytes) => {
+                let decoded = decode_audio_bytes(ctx, &bytes).await;
+                let mut lib = library.borrow_mut();
+                lib.inflight.remove(filename);
+                match decoded {
+                    Ok(buf) => {
+                        lib.buffers.insert(filename.to_string(), buf.clone());
+                        return Ok(buf);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            CacheStep::Fetch => {
+                let url = format!("{}/static/stones/{}", api::base_url(), filename);
+                let fetched = api::fetch_bytes(&url).await;
+                let mut lib = library.borrow_mut();
+                lib.inflight.remove(filename);
+                match fetched {
+                    Ok(bytes) => {
+                        lib.bytes.insert(filename.to_string(), bytes);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn decode_audio_bytes(
+    ctx: &web_sys::AudioContext,
+    bytes: &[u8],
 ) -> Result<web_sys::AudioBuffer, String> {
     use js_sys::Uint8Array;
     use wasm_bindgen::JsCast;
-    let bytes = api::fetch_bytes(url).await?;
-    let len = bytes.len();
-    let arr = Uint8Array::new_with_length(len as u32);
-    arr.copy_from(bytes.as_slice());
+    let arr = Uint8Array::new_with_length(bytes.len() as u32);
+    arr.copy_from(bytes);
     let array_buffer = arr
         .buffer()
         .dyn_into::<js_sys::ArrayBuffer>()
@@ -1056,8 +1195,9 @@ async fn load_audio_buffer(
     let result = wasm_bindgen_futures::JsFuture::from(promise)
         .await
         .map_err(|_| "decode_audio_data failed".to_string())?;
-    let buffer = result.dyn_into::<web_sys::AudioBuffer>().map_err(|_| "not AudioBuffer")?;
-    Ok(buffer)
+    result
+        .dyn_into::<web_sys::AudioBuffer>()
+        .map_err(|_| "not AudioBuffer".to_string())
 }
 
 #[cfg(target_arch = "wasm32")]
