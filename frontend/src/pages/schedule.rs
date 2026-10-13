@@ -504,6 +504,43 @@ fn apply_scroll_top(scroll_el_id: &str, scroll_top: i32) {
     }
 }
 
+/// Scroll the timeline body so the match block's vertical midpoint sits in the
+/// middle of the visible schedule. Returns false when the block is not in the DOM yet.
+fn scroll_match_to_center(scroll_el_id: &str, match_id: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let Some(window) = web_sys::window() else {
+            return false;
+        };
+        let Some(doc) = window.document() else {
+            return false;
+        };
+        let Some(scroll_el) = doc.get_element_by_id(scroll_el_id) else {
+            return false;
+        };
+        let Some(html_el) = scroll_el.dyn_ref::<web_sys::HtmlElement>() else {
+            return false;
+        };
+        let selector = format!("[data-event-id=\"{match_id}\"]");
+        let Ok(Some(target)) = doc.query_selector(&selector) else {
+            return false;
+        };
+        let scroll_rect = html_el.get_bounding_client_rect();
+        let target_rect = target.get_bounding_client_rect();
+        let delta = (target_rect.top() + target_rect.height() / 2.0)
+            - (scroll_rect.top() + scroll_rect.height() / 2.0);
+        let new_top = (html_el.scroll_top() as f64 + delta).max(0.0) as i32;
+        html_el.set_scroll_top(new_top);
+        true
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (scroll_el_id, match_id);
+        false
+    }
+}
+
 fn focus_team_storage_key(tournament_url: &str) -> String {
     format!("schedule_focus_team:{tournament_url}")
 }
@@ -759,6 +796,8 @@ fn SchedulePage(url: String, view: String, team: String, field: String, editor: 
         .date_naive();
         today.format("%Y-%m-%d").to_string()
     });
+    // Warnings click: timeline switches to this match's day and centers the block.
+    let mut focus_match = use_signal(|| None::<String>);
     // Inline error affordance for drag-move / bulk failures (dismissible alert near the toolbar).
     let mut edit_error = use_signal(|| None::<String>);
     // Prefill for the create-match card when opened from a drag-to-create gesture.
@@ -1561,6 +1600,7 @@ fn SchedulePage(url: String, view: String, team: String, field: String, editor: 
                             tournament_url: url.clone(),
                             editor: editor && view_mode() == "timeline",
                             viewed_day: viewed_day,
+                            focus_match: Some(focus_match),
                             bulk_select_active: bulk_mode(),
                             selected_ids: bulk_selected(),
                             // Pending-create placeholder: stays visible while the create card
@@ -1853,6 +1893,61 @@ fn SchedulePage(url: String, view: String, team: String, field: String, editor: 
                         ScheduleWarningsModal {
                             tournament_url: url.clone(),
                             on_close: move |_| active_modal.set("none".to_string()),
+                            selectable: editor,
+                            on_select_match: {
+                                let matches_for_warn = data.matches.clone();
+                                let fields_for_warn = data.fields.clone();
+                                let team_options_for_warn = data.team_options.clone();
+                                move |name: String| {
+                                if !editor {
+                                    return;
+                                }
+                                let Some(m) = matches_for_warn.iter().find(|m| m.name == name) else {
+                                    return;
+                                };
+                                team_field_focus.set(None);
+                                if is_structural_match(m) && !m.name.is_empty() {
+                                    selected_break_group.set(m.name.clone());
+                                    active_modal.set("break_group".to_string());
+                                } else {
+                                    selected_match_id.set(m.uuid.clone());
+                                    active_modal.set("match_edit".to_string());
+                                }
+                                // The block has to be on the timeline to center it.
+                                if view_mode() == "table" {
+                                    view_mode.set("timeline".to_string());
+                                }
+                                if view_mode() == "team" {
+                                    let visible = !focus_team_id().is_empty()
+                                        && !is_structural_match(m)
+                                        && match_involves_team(
+                                            m,
+                                            &focus_team_id(),
+                                            &team_options_for_warn,
+                                        );
+                                    if !visible {
+                                        view_mode.set("timeline".to_string());
+                                    }
+                                }
+                                if view_mode() != "team" {
+                                    let field_id = m.field.as_ref().and_then(|field_name| {
+                                        fields_for_warn
+                                            .iter()
+                                            .find(|f| &f.name == field_name)
+                                            .map(|f| f.id.to_string())
+                                    });
+                                    if let Some(fid) = field_id {
+                                        if view_mode() == "field" {
+                                            selected_field.set(fid);
+                                        } else if selected_field() != "all" && selected_field() != fid {
+                                            selected_field.set("all".to_string());
+                                        }
+                                    }
+                                }
+                                focus_match.set(Some(m.uuid.clone()));
+                                }
+                            },
+                            known_match_names: data.matches.iter().map(|m| m.name.clone()).collect::<Vec<_>>(),
                         }
                     }
                 }
@@ -3383,7 +3478,17 @@ fn TOMLImportModal(
 }
 
 #[component]
-fn ScheduleWarningsModal(tournament_url: String, on_close: EventHandler<()>) -> Element {
+fn ScheduleWarningsModal(
+    tournament_url: String,
+    on_close: EventHandler<()>,
+    /// Editor: clicking a real match name focuses it on the timeline.
+    #[props(default = false)]
+    selectable: bool,
+    #[props(default)]
+    on_select_match: EventHandler<String>,
+    #[props(default)]
+    known_match_names: Vec<String>,
+) -> Element {
     use crate::types::ScheduleWarning;
     let mut warnings = use_signal(|| None::<Vec<ScheduleWarning>>);
     let mut error = use_signal(|| None::<String>);
@@ -3451,8 +3556,31 @@ fn ScheduleWarningsModal(tournament_url: String, on_close: EventHandler<()>) -> 
                                                 div { class: "fw-semibold", "{kind_label(&w.kind)}" }
                                                 div { "{w.message}" }
                                                 if !w.matches.is_empty() {
-                                                    div { class: "small text-muted mt-1",
-                                                        "Matches: {w.matches.join(\", \")}"
+                                                    div { class: "small mt-1",
+                                                        span { class: "text-muted", "Matches: " }
+                                                        for (j, name) in w.matches.iter().enumerate() {
+                                                            {
+                                                                let name = name.clone();
+                                                                let selectable = selectable
+                                                                    && known_match_names.iter().any(|n| n == &name);
+                                                                let on_select_match = on_select_match;
+                                                                rsx! {
+                                                                    if j > 0 {
+                                                                        span { class: "text-muted", ", " }
+                                                                    }
+                                                                    if selectable {
+                                                                        button {
+                                                                            r#type: "button",
+                                                                            class: "btn btn-link btn-sm p-0 align-baseline",
+                                                                            onclick: move |_| on_select_match.call(name.clone()),
+                                                                            "{name}"
+                                                                        }
+                                                                    } else {
+                                                                        span { class: "text-muted", "{name}" }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -4803,6 +4931,9 @@ fn ScheduleTimeline(
     /// Shared with the parent toolbar so "push back day" targets this day (`YYYY-MM-DD`).
     #[props(default)]
     viewed_day: Signal<String>,
+    /// When set, show this match's day and vertically center its block, then clear.
+    #[props(default)]
+    focus_match: Option<Signal<Option<String>>>,
     /// Bulk-length selection mode is active (drags disabled; clicks toggle selection).
     #[props(default = false)]
     bulk_select_active: bool,
@@ -5119,6 +5250,59 @@ fn ScheduleTimeline(
             on_key_nav_consumed.call(());
         }
     });
+
+    // Jump to a match requested from the warnings list: its display day, then
+    // center the block once that day is on screen.
+    {
+        let focus_days: Vec<(String, chrono::NaiveDate)> = data
+            .matches
+            .iter()
+            .filter_map(|m| {
+                let (start_utc, _) = display_interval_utc(m, show_as_happened)?;
+                let day = (start_utc + chrono::Duration::minutes(tz_offset_minutes)).date();
+                Some((m.uuid.clone(), day))
+            })
+            .collect();
+        let scroll_id = scroll_el_id.to_string();
+        use_effect(move || {
+            let Some(focus_match) = focus_match else {
+                return;
+            };
+            let mut focus_match = focus_match;
+            let Some(id) = focus_match() else {
+                return;
+            };
+            let Some((_, day)) = focus_days.iter().find(|(uuid, _)| uuid == &id) else {
+                focus_match.set(None);
+                return;
+            };
+            let day = *day;
+            if visible_date_signal() != day {
+                visible_date_signal.set(day);
+                return;
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let scroll_id = scroll_id.clone();
+                let match_id = id.clone();
+                spawn(async move {
+                    gloo_timers::future::TimeoutFuture::new(0).await;
+                    if scroll_match_to_center(&scroll_id, &match_id) {
+                        focus_match.set(None);
+                        return;
+                    }
+                    gloo_timers::future::TimeoutFuture::new(150).await;
+                    let _ = scroll_match_to_center(&scroll_id, &match_id);
+                    focus_match.set(None);
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let _ = scroll_id;
+                focus_match.set(None);
+            }
+        });
+    }
 
     // Team view uses one synthetic column; all-teams uses real fields.
     const TEAM_VIEW_FIELD_ID: u32 = u32::MAX;
@@ -5633,6 +5817,11 @@ fn ScheduleTimeline(
     };
     use_effect(move || {
         let _ = visible_date_signal(); // re-run effect when date changes
+        // A warnings jump centers a specific block; don't yank the view to the
+        // first match of the day while that request is still in flight.
+        if focus_match.is_some_and(|focus| focus.peek().is_some()) {
+            return;
+        }
         let slot = target_slot;
         let scroll_el_id = scroll_el_id;
         #[cfg(target_arch = "wasm32")]
