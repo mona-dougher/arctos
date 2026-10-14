@@ -81,6 +81,17 @@
     cursor: pointer;
 }
 
+/* Hold-H hand tool: canvas items ignore the pointer so the wrap gets every move */
+.bracket-canvas-wrap.hand-pan,
+.bracket-canvas-wrap.hand-pan * {
+    cursor: grab !important;
+}
+
+.bracket-canvas-wrap.hand-pan .bracket-canvas,
+.bracket-canvas-wrap.hand-pan .bracket-canvas * {
+    pointer-events: none !important;
+}
+
 .bracket-match {
     position: absolute;
     z-index: 2;
@@ -289,6 +300,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     cursor: default;
+}
+
+/* Output-side net labels: right of the W/L port, centered on it, drawn over wires */
+.bracket-net-label.output {
+    transform: translate(0, -50%);
+    margin-left: 8px;
+    max-width: 220px;
 }
 
 .bracket-net-label.editable {

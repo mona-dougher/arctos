@@ -533,6 +533,10 @@ fn images_json(items: &[BracketImageData]) -> Vec<serde_json::Value> {
 /// How far net-labels stick out left of a match (CSS max-width + margin +
 /// port).
 const NET_LABEL_LEFT_EXTENT: f64 = 120.0;
+/// How far output-side net labels stick out right of a match.
+const NET_LABEL_RIGHT_EXTENT: f64 = 190.0;
+/// Horizontal gap between an output port and an auto-created team label.
+const OUTPUT_LABEL_GAP: f64 = 60.0;
 /// Small overhang for port stubs / borders outside the match box.
 const PORT_STUB_EXTENT: f64 = 8.0;
 
@@ -572,6 +576,13 @@ fn content_bounds(
                         NET_LABEL_LEFT_EXTENT,
                         p.height,
                     );
+                }
+                // Output-side net labels sit on the W/L ports, right of the match.
+                if [Qual::Winner, Qual::Loser]
+                    .into_iter()
+                    .any(|q| !output_consumers(m, q, matches, labeled).unwired.is_empty())
+                {
+                    bump(x + p.width, y, NET_LABEL_RIGHT_EXTENT, p.height);
                 }
             }
         }
@@ -764,13 +775,71 @@ fn convert_match_port(
     });
 }
 
+/// Consumers of one output of a match: whether any exist, and display names of
+/// those not drawn as a wire (LABEL mode or unplaced), deduplicated in order.
+struct OutputConsumers {
+    any: bool,
+    unwired: Vec<String>,
+}
+
+fn output_consumers(
+    source: &BracketMatchData,
+    qual: Qual,
+    matches: &[BracketMatchData],
+    labeled: &[BracketLabeledTeamData],
+) -> OutputConsumers {
+    let refs_source = |token: &str| {
+        parse_match_ref(token)
+            .map(|(name, q)| q == qual && name.eq_ignore_ascii_case(&source.name))
+            .unwrap_or(false)
+    };
+    let mut any = false;
+    let mut unwired: Vec<String> = Vec::new();
+    let mut push = |name: String| {
+        if !unwired.contains(&name) {
+            unwired.push(name);
+        }
+    };
+    for m in matches {
+        if m.uuid == source.uuid {
+            continue;
+        }
+        for (initial, mode) in [
+            (m.team1_initial.as_deref(), m.placement.as_ref().map(|p| p.team1.as_str())),
+            (m.team2_initial.as_deref(), m.placement.as_ref().map(|p| p.team2.as_str())),
+        ] {
+            if !initial.map(&refs_source).unwrap_or(false) {
+                continue;
+            }
+            any = true;
+            if !(is_placed(m) && mode.map(is_net).unwrap_or(false)) {
+                push(m.name.clone());
+            }
+        }
+    }
+    for lt in labeled {
+        if !refs_source(&lt.team) {
+            continue;
+        }
+        any = true;
+        if !is_net(&lt.kind) {
+            push(if lt.label.is_empty() { "Label".into() } else { lt.label.clone() });
+        }
+    }
+    OutputConsumers { any, unwired }
+}
+
 /// Toggle LABEL↔NET on every consumer of `source`'s winner or loser output.
 /// Same semantics as clicking a net-label / wire on each consumer input:
 /// NET → LABEL, LABEL → NET (auto-placing unplaced consumers first).
+/// With `wire_only`, consumers already drawn as wires are left alone.
+/// When the output has no consumers at all, a wired team label is created
+/// right next to the output port instead.
 fn toggle_output_consumers(
     url: String,
     source: &BracketMatchData,
     qual: Qual,
+    wire_only: bool,
     local_matches: Signal<Vec<BracketMatchData>>,
     local_texts: Signal<Vec<BracketTextData>>,
     local_labeled: Signal<Vec<BracketLabeledTeamData>>,
@@ -782,6 +851,36 @@ fn toggle_output_consumers(
     let src_name = source.name.clone();
     let sp = placement_or_default(source);
     let (sx, sy) = (sp.x_pos.unwrap_or(40.0), sp.y_pos.unwrap_or(40.0));
+
+    if !output_consumers(source, qual, &local_matches(), &local_labeled()).any {
+        let token = match qual {
+            Qual::Winner => format!("{src_name}::winner"),
+            Qual::Loser => format!("{src_name}::loser"),
+        };
+        let lx = sx + sp.width + OUTPUT_LABEL_GAP;
+        let ly = out_port_y(sy, sp.height, qual) - LABELED_TEAM_H * 0.5;
+        saving.set(true);
+        spawn(async move {
+            match api::add_bracket_labeled_team_with(&url, lx, ly, &token, "NET").await {
+                Ok(resp) => apply_layout(
+                    resp,
+                    local_matches,
+                    local_texts,
+                    local_labeled,
+                    local_images,
+                    dirty,
+                    canvas_size,
+                ),
+                Err(e) => {
+                    #[cfg(target_arch = "wasm32")]
+                    web_sys::console::error_1(&e.into());
+                    let _ = e;
+                }
+            }
+            saving.set(false);
+        });
+        return;
+    }
 
     #[derive(Clone)]
     enum Action {
@@ -830,7 +929,10 @@ fn toggle_output_consumers(
             if !ref_name.eq_ignore_ascii_case(&src_name) || q != qual {
                 continue;
             }
-            let mode = if port_is_net { "LABEL" } else { "NET" };
+            if wire_only && port_is_net && is_placed(m) {
+                continue;
+            }
+            let mode = if port_is_net && !wire_only { "LABEL" } else { "NET" };
             let place_at = if !is_placed(m) && mode == "NET" {
                 let nx = sx + sp.width + 80.0;
                 let ny = sy + (place_i as f64) * (DEFAULT_HEIGHT + 24.0);
@@ -856,6 +958,9 @@ fn toggle_output_consumers(
             continue;
         };
         if !ref_name.eq_ignore_ascii_case(&src_name) || q != qual {
+            continue;
+        }
+        if wire_only && is_net(&lt.kind) {
             continue;
         }
         let mode = if is_net(&lt.kind) { "LABEL" } else { "NET" };
@@ -1223,6 +1328,8 @@ enum LabelKind {
     Tag { name: String },
     Winner { match_name: String },
     Loser { match_name: String },
+    /// Output side: comma-separated consumers not drawn as wires.
+    Destinations { names: String },
     Raw(String),
 }
 
@@ -1297,6 +1404,9 @@ pub fn Bracket(url: String) -> Element {
     let mut tournament_name_sig = use_signal(|| String::new());
     let mut is_to_sig = use_signal(|| false);
     let mut interaction = use_signal(Interaction::default);
+    // Hold-H hand tool: pointer motion pans without a button (trackpad-friendly).
+    let mut hand_pan = use_signal(|| false);
+    let mut hand_last = use_signal(|| None::<(f64, f64)>);
     let mut active_modal = use_signal(ActiveModal::default);
     let mut add_match_query = use_signal(String::new);
     let mut saving = use_signal(|| false);
@@ -1858,6 +1968,20 @@ pub fn Bracket(url: String) -> Element {
                                 ev.prevent_default();
                                 active_modal.set(ActiveModal::AddMenu);
                             }
+                            "h" | "H" => {
+                                let mods = ev.modifiers();
+                                if mods.ctrl() || mods.meta() || mods.alt() { return; }
+                                ev.prevent_default();
+                                if !hand_pan() {
+                                    hand_last.set(None);
+                                    hand_pan.set(true);
+                                    clear_field_hover();
+                                    let mut ix = interaction.write();
+                                    if !matches!(ix.drag, Some(DragKind::Move { .. } | DragKind::Resize { .. })) {
+                                        ix.drag = None;
+                                    }
+                                }
+                            }
                             "s" | "S" => {
                                 if interaction().selected.is_empty() { return; }
                                 ev.prevent_default();
@@ -1892,6 +2016,20 @@ pub fn Bracket(url: String) -> Element {
                         role: "application",
                         aria_label: "Bracket editor",
                         onkeydown: handle_keydown,
+                        onkeyup: move |ev: Event<KeyboardData>| {
+                            let k = ev.key().to_string();
+                            if k == "h" || k == "H" {
+                                hand_pan.set(false);
+                                hand_last.set(None);
+                            }
+                        },
+                        // Losing focus means the H keyup may never arrive.
+                        onfocusout: move |_| {
+                            if hand_pan() {
+                                hand_pan.set(false);
+                                hand_last.set(None);
+                            }
+                        },
                         // Clicking gutters/sides of the page restores hotkey focus.
                         onclick: move |_| {
                             focus_bracket_root();
@@ -2317,6 +2455,9 @@ pub fn Bracket(url: String) -> Element {
                                 if active_field_hover.is_some() {
                                     c.push_str(" field-hovering");
                                 }
+                                if edit_mode() && hand_pan() {
+                                    c.push_str(" hand-pan");
+                                }
                                 c
                             },
                             style: {
@@ -2383,6 +2524,15 @@ pub fn Bracket(url: String) -> Element {
                                 zoom.set(new_z);
                             },
                             onmousemove: move |ev: Event<MouseData>| {
+                                if edit_mode() && hand_pan() {
+                                    let (sx, sy) = screen_pointer(&ev);
+                                    if let Some((lx, ly)) = hand_last() {
+                                        let (px, py) = pan();
+                                        pan.set((px + (sx - lx), py + (sy - ly)));
+                                    }
+                                    hand_last.set(Some((sx, sy)));
+                                    return;
+                                }
                                 let mut ix = interaction.write();
                                 let Some(drag) = ix.drag.clone() else {
                                     // No drag: continuously resolve field-airwire hover from
@@ -2588,7 +2738,7 @@ pub fn Bracket(url: String) -> Element {
                                     });
                                     return;
                                 }
-                                if !edit_mode() { return; }
+                                if !edit_mode() || hand_pan() { return; }
                                 let mods = ev.modifiers();
                                 let (cx, cy) = canvas_pointer(&ev, zoom(), pan());
                                 let mut ix = interaction.write();
@@ -2606,7 +2756,10 @@ pub fn Bracket(url: String) -> Element {
                             },
                             // Safety net: leaving the viewport always drops field highlight
                             // (SVG stroke mouseleave is unreliable at edges / while panning).
-                            onmouseleave: move |_| clear_field_hover(),
+                            onmouseleave: move |_| {
+                                clear_field_hover();
+                                hand_last.set(None);
+                            },
 
                             div {
                                 class: "bracket-canvas",
@@ -2930,6 +3083,10 @@ pub fn Bracket(url: String) -> Element {
                                         let t2_label = short_or_truncate(&m.team2_name, m.team2_shortname.as_deref());
                                         let w_used = used_outputs.contains(&(m.uuid.clone(), Qual::Winner));
                                         let l_used = used_outputs.contains(&(m.uuid.clone(), Qual::Loser));
+                                        let w_dests = output_consumers(&m, Qual::Winner, &matches_snap, &labeled_snap).unwired;
+                                        let l_dests = output_consumers(&m, Qual::Loser, &matches_snap, &labeled_snap).unwired;
+                                        let w_shown = w_used || !w_dests.is_empty();
+                                        let l_shown = l_used || !l_dests.is_empty();
                                         let label1 = if !is_net(&p.team1) { m.team1_initial.clone() } else { None };
                                         let label2 = if !is_net(&p.team2) { m.team2_initial.clone() } else { None };
                                         let uuid_down = m.uuid.clone();
@@ -3026,11 +3183,44 @@ pub fn Bracket(url: String) -> Element {
 
                                             div { class: "bracket-port-stub", style: "left: {x}px; top: {y1_port}px;" }
                                             div { class: "bracket-port-stub", style: "left: {x}px; top: {y2_port}px;" }
-                                            if edit_mode() || w_used {
+                                            if edit_mode() || w_shown {
                                                 div { class: "bracket-port-stub output", style: "left: {x + w}px; top: {out_port_y(y, h, Qual::Winner)}px;" }
                                             }
-                                            if edit_mode() || l_used {
+                                            if edit_mode() || l_shown {
                                                 div { class: "bracket-port-stub output loser", style: "left: {x + w}px; top: {out_port_y(y, h, Qual::Loser)}px;" }
+                                            }
+                                            for (qual, dests) in [(Qual::Winner, w_dests.clone()), (Qual::Loser, l_dests.clone())] {
+                                                if !dests.is_empty() {
+                                                    NetLabelView {
+                                                        key: "{m.uuid}-out-{qual:?}",
+                                                        x: x + w,
+                                                        y: out_port_y(y, h, qual),
+                                                        kind: LabelKind::Destinations { names: dests.join(", ") },
+                                                        backend: backend.clone(),
+                                                        editable: edit_mode(),
+                                                        output: true,
+                                                        on_click: {
+                                                            let u = tournament_url.clone();
+                                                            let src = m.clone();
+                                                            move |_| {
+                                                                if !edit_mode() { return; }
+                                                                toggle_output_consumers(
+                                                                    u.clone(),
+                                                                    &src,
+                                                                    qual,
+                                                                    true,
+                                                                    local_matches,
+                                                                    local_texts,
+                                                                    local_labeled,
+                                                                    local_images,
+                                                                    dirty,
+                                                                    saving,
+                                                                    canvas_size,
+                                                                );
+                                                            }
+                                                        },
+                                                    }
+                                                }
                                             }
 
                                             div {
@@ -3086,9 +3276,9 @@ pub fn Bracket(url: String) -> Element {
                                                             span { class: "winner-badge", title: "Match winner", "Winner" }
                                                         }
                                                     }
-                                                    if edit_mode() || w_used {
+                                                    if edit_mode() || w_shown {
                                                         span {
-                                                            class: if w_used {
+                                                            class: if w_shown {
                                                                 "bracket-port-badge winner clickable"
                                                             } else {
                                                                 "bracket-port-badge winner clickable unused"
@@ -3096,6 +3286,8 @@ pub fn Bracket(url: String) -> Element {
                                                             title: if edit_mode() {
                                                                 if w_used {
                                                                     "Click to convert winner consumers to labels (unwire)"
+                                                                } else if w_dests.is_empty() {
+                                                                    "Click to add a team label for this winner"
                                                                 } else {
                                                                     "Click to wire/place matches that take this winner"
                                                                 }
@@ -3113,6 +3305,7 @@ pub fn Bracket(url: String) -> Element {
                                                                         u.clone(),
                                                                         &src,
                                                                         Qual::Winner,
+                                                                        false,
                                                                         local_matches,
                                                                         local_texts,
                                                                         local_labeled,
@@ -3156,9 +3349,9 @@ pub fn Bracket(url: String) -> Element {
                                                             span { class: "winner-badge", title: "Match winner", "Winner" }
                                                         }
                                                     }
-                                                    if edit_mode() || l_used {
+                                                    if edit_mode() || l_shown {
                                                         span {
-                                                            class: if l_used {
+                                                            class: if l_shown {
                                                                 "bracket-port-badge loser clickable"
                                                             } else {
                                                                 "bracket-port-badge loser clickable unused"
@@ -3166,6 +3359,8 @@ pub fn Bracket(url: String) -> Element {
                                                             title: if edit_mode() {
                                                                 if l_used {
                                                                     "Click to convert loser consumers to labels (unwire)"
+                                                                } else if l_dests.is_empty() {
+                                                                    "Click to add a team label for this loser"
                                                                 } else {
                                                                     "Click to wire/place matches that take this loser"
                                                                 }
@@ -3183,6 +3378,7 @@ pub fn Bracket(url: String) -> Element {
                                                                         u.clone(),
                                                                         &src,
                                                                         Qual::Loser,
+                                                                        false,
                                                                         local_matches,
                                                                         local_texts,
                                                                         local_labeled,
@@ -3974,21 +4170,37 @@ fn NetLabelView(
     kind: LabelKind,
     backend: String,
     editable: bool,
+    /// Sits right of an output port instead of left of an input.
+    #[props(default)]
+    output: bool,
     on_click: EventHandler<Event<MouseData>>,
 ) -> Element {
-    let class = if editable {
-        "bracket-net-label editable"
-    } else {
-        "bracket-net-label"
+    let mut class = String::from("bracket-net-label");
+    if output {
+        class.push_str(" output");
+    }
+    if editable {
+        class.push_str(" editable");
+    }
+    let title = match (&kind, editable) {
+        (LabelKind::Destinations { names }, true) => format!("{names} — click to draw as wires"),
+        (LabelKind::Destinations { names }, false) => names.clone(),
+        (_, true) => "Click to convert to wire".to_string(),
+        (_, false) => String::new(),
     };
     rsx! {
         div {
             class: "{class}",
             style: "left: {x}px; top: {y}px;",
-            title: if editable { "Click to convert to wire" } else { "" },
+            title: "{title}",
             onclick: move |ev: Event<MouseData>| {
                 ev.stop_propagation();
                 on_click.call(ev);
+            },
+            onmousedown: move |ev: Event<MouseData>| {
+                if editable {
+                    ev.stop_propagation();
+                }
             },
             {
                 match &kind {
@@ -4004,6 +4216,10 @@ fn NetLabelView(
                     LabelKind::Loser { match_name } => rsx! {
                         img { class: "token-icon", src: "{backend}/static/reference.svg", alt: "ref" }
                         span { class: "token-text", "{match_name} loser" }
+                    },
+                    LabelKind::Destinations { names } => rsx! {
+                        img { class: "token-icon", src: "{backend}/static/reference.svg", alt: "ref" }
+                        span { class: "token-text", "{names}" }
                     },
                     LabelKind::Raw(s) => rsx! { span { class: "token-text", "{s}" } },
                 }

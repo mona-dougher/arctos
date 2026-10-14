@@ -1357,11 +1357,22 @@ pub async fn add_bracket_labeled_team(
     x_pos: f64,
     y_pos: f64,
 ) -> Result<BracketLayoutResponse, String> {
+    add_bracket_labeled_team_with(tournament_url, x_pos, y_pos, "", "LABEL").await
+}
+
+/// Create a labeled-team element bound to `team` (e.g. `Match::winner`) in `kind` mode.
+pub async fn add_bracket_labeled_team_with(
+    tournament_url: &str,
+    x_pos: f64,
+    y_pos: f64,
+    team: &str,
+    kind: &str,
+) -> Result<BracketLayoutResponse, String> {
     let c = client();
     let body = serde_json::json!({
         "label": "Label",
-        "team": "",
-        "kind": "LABEL",
+        "team": team,
+        "kind": kind,
         "x_pos": x_pos,
         "y_pos": y_pos
     });
