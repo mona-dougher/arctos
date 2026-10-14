@@ -178,7 +178,7 @@ class Pompfen(Enum):
     QTIP = 2
     STAFF = 3
     BOARD = 4
-    FLOURENTINE = 5
+    FLORENTINE = 5
     SKULL = 6
     UNARMED = 7
 

@@ -31,8 +31,8 @@ pub const ALL_POMPFEN: &[PompfenOption] = &[
         icon: "pompfen_symbols/board.png",
     },
     PompfenOption {
-        id: "FLOURENTINE",
-        label: "Flourentine",
+        id: "FLORENTINE",
+        label: "Florentine",
         icon: "pompfen_symbols/flo.png",
     },
     PompfenOption {
@@ -67,7 +67,10 @@ pub fn default_allowed_weapons() -> Vec<String> {
 }
 
 #[component]
-pub fn PompfenIcon(weapon: String, #[props(default = "1.5em".to_string())] size: String) -> Element {
+pub fn PompfenIcon(
+    weapon: String,
+    #[props(default = "1.5em".to_string())] size: String,
+) -> Element {
     let src = pompfen_icon_src(&weapon);
     match src {
         Some(src) => rsx! {
