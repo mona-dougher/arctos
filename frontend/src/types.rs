@@ -1238,7 +1238,7 @@ pub struct ServerTimeResponse {
     pub timestamp: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScoreboardStateResponse {
     pub has_active_match: bool,
     pub match_id: Option<String>,
@@ -1257,21 +1257,21 @@ pub struct ScoreboardStateResponse {
     pub timestamp: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StonesInfo {
     pub stones_per_set: u32,
     pub stones_remaining: Option<u32>,
 }
 
 /// Point data for live stones computation on scoreboard (STONES matches).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScoreboardPointForStones {
     pub stamp: Option<String>,
     pub end_stamp: Option<String>,
     pub stones_at_start: Option<u32>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PrevNextMatch {
     pub team1_name: String,
     pub team2_name: String,

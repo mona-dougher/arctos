@@ -17,6 +17,25 @@ This only inserts a row into the `alembic_version` table; it does not
 modify any data. **Run this once per database, ever.** After this point,
 every schema change goes through `just db-migrate`.
 
+## Scoreboard overlay rendering
+
+The scoreboard overlay endpoint renders frames with headless Chromium via
+Playwright, so the server needs a Chromium build plus its system
+libraries. Once per server (and after Playwright upgrades in `uv.lock`):
+
+```bash
+uv sync
+uv run playwright install --with-deps chromium
+```
+
+`--with-deps` installs the shared libraries via apt and needs sudo. To
+use an already-installed Chromium/Chrome instead, set
+`ARCTOS_CHROMIUM_PATH`. Then set `ARCTOS_FRONTEND_URL` to the public
+origin serving the SPA (see [env-vars.md](env-vars.md)) and restart.
+The SPA build being served there must include the `/scoreboard-render`
+route. Without this setup the endpoint returns 503; nothing else is
+affected.
+
 ## The deploy loop
 
 Every deploy follows the same shape:

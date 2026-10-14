@@ -172,6 +172,9 @@ enum Route {
     #[route("/stones")]
     Stones {},
 
+    #[route("/scoreboard-render")]
+    ScoreboardRender {},
+
     #[route("/about")]
     About {},
 

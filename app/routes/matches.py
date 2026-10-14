@@ -30,7 +30,7 @@ from app.utils.responses import json_error, json_success
 from app.utils.datetime_helpers import to_iso_z, now_utc_naive
 from app.utils.result_helpers import json_from_result
 from app.domain.enums import RegistrationStatus, MatchStatus, SetType
-from app.services.scoreboard_service import ScoreboardService
+from app.services.scoreboard_service import ScoreboardService, team_fields
 
 bp = Blueprint("matches", __name__, url_prefix="/_api")
 
@@ -48,16 +48,10 @@ def scoreboard_state():
 
     if state.active:
         match = state.active.match
-        team1, team2 = state.active.team1, state.active.team2
 
-        # For STONES matches, get stones info and points for live stones during a point
-        stones_info = None
+        # For STONES matches, send points so the client can tick stones live during a point
         points_for_stones = None
         if match.set_type == SetType.STONES:
-            stones_info = {
-                "stones_per_set": match.stones_per_set or 100,
-                "stones_remaining": match.stones_remaining,
-            }
             points_for_stones = [
                 {
                     "stamp": to_iso_z(p.stamp).unwrap_or(None),
@@ -69,33 +63,22 @@ def scoreboard_state():
 
         return jsonify(
             {
-                "has_active_match": True,
-                "match_id": match.uuid,
-                "team1_name": team1.name,
-                "team2_name": team2.name,
-                "team1_photo": team1.photo,
-                "team2_photo": team2.photo,
-                "team1_shortname": team1.shortname,
-                "team2_shortname": team2.shortname,
-                "scores_by_set": {
-                    number: {"team1_score": team1_score, "team2_score": team2_score}
-                    for number, (team1_score, team2_score) in state.set_scores.items()
-                },
-                "sets": list(state.set_scores),
-                "stones_info": stones_info,
+                **ScoreboardService.active_match_state(
+                    state.active,
+                    started_points=state.points,
+                    scored_points=state.points,
+                    stones_remaining=match.stones_remaining,
+                ),
                 "points_for_stones": points_for_stones,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
 
     def summary(scoreboard_match):
-        return {
-            "team1_name": scoreboard_match.team1.name or "Team 1",
-            "team2_name": scoreboard_match.team2.name or "Team 2",
-            "team1_photo": scoreboard_match.team1.photo,
-            "team2_photo": scoreboard_match.team2.photo,
-            "team1_shortname": scoreboard_match.team1.shortname,
-            "team2_shortname": scoreboard_match.team2.shortname,
+        fields = team_fields(scoreboard_match.team1, scoreboard_match.team2)
+        return fields | {
+            "team1_name": fields["team1_name"] or "Team 1",
+            "team2_name": fields["team2_name"] or "Team 2",
         }
 
     prev_data = None
