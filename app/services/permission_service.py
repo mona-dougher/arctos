@@ -124,6 +124,27 @@ class PermissionService:
         return TO.query.filter_by(user_id=user.id, user_type=str(user_type), league_id=league_url).first() is not None
 
     @staticmethod
+    def organized_scopes(user) -> tuple[set[str], set[str]]:
+        """Return the ``(tournament_urls, league_urls)`` that *user* is a TO of.
+
+        Args:
+            user: Flask-Login user object, or ``None``.
+
+        Returns:
+            Two sets of URL slugs; both empty for ``None`` / unsupported users.
+        """
+        match PermissionService.user_type(user):
+            case Some(user_type):
+                pass
+            case _:
+                return set(), set()
+
+        from models import TO
+
+        rows = TO.query.filter_by(user_id=user.id, user_type=str(user_type)).all()
+        return {row.event for row in rows if row.event}, {row.league_id for row in rows if row.league_id}
+
+    @staticmethod
     def can_view_tournament(tournament_url: str, user) -> bool:
         """Return whether *user* may view the tournament.
 

@@ -17,6 +17,7 @@ header, so every other route keeps rejecting them.
 from __future__ import annotations
 
 import functools
+import json
 
 from authlib.integrations.flask_oauth2 import AuthorizationServer
 from authlib.integrations.flask_oauth2.errors import raise_http_exception
@@ -34,7 +35,7 @@ from app.utils.datetime_helpers import now_utc_naive
 
 SCOPES = {
     "injuries": "Read all of your injury records, including private ones",
-    "footage": "Upload match footage to tournaments you organize",
+    "footage": "See tournaments you organize, including unpublished ones, and upload match footage to them",
 }
 """Scopes a client may request. Reading public data needs no scope."""
 
@@ -221,7 +222,7 @@ def require_bearer(scope: str | None = None, user_required: bool = False):
                 if user_required and user is None:
                     raise InsufficientScopeError(description="This endpoint needs a token issued for a user.")
             except (InvalidTokenError, InsufficientScopeError) as error:
-                raise_http_exception(error.status_code, error.get_body(), error.get_headers())
+                raise_http_exception(error.status_code, json.dumps(dict(error.get_body())), error.get_headers())
             now = now_utc_naive()
             if token.last_used_at is None or (now - token.last_used_at).total_seconds() > LAST_USED_RESOLUTION_SECONDS:
                 token.last_used_at = now

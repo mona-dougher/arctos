@@ -29,7 +29,8 @@ from app.utils.player_helpers import get_player_display_from_registration
 from app.utils.responses import json_error, json_success
 from app.utils.datetime_helpers import to_iso_z, now_utc_naive
 from app.utils.result_helpers import json_from_result
-from app.domain.enums import RegistrationStatus, MatchStatus, ScheduleType
+from app.domain.enums import RegistrationStatus, MatchStatus, SetType
+from app.services.scoreboard_service import ScoreboardService
 
 bp = Blueprint("matches", __name__, url_prefix="/_api")
 
@@ -43,182 +44,69 @@ def scoreboard_state():
     if not tournament_url or not field_name:
         return jsonify({"error": "Tournament and field parameters required"}), 400
 
-    # Find the active match on this field (only IN_PROGRESS)
-    match = Match.query.filter_by(event=tournament_url, field=field_name, status=MatchStatus.IN_PROGRESS).first()
+    state = ScoreboardService.field_state(tournament_url, field_name)
 
-    # Get team information helper
-    from models import Team, Tournament
-
-    def get_team_info(m):
-        if not m:
-            return None, None, None, None, None, None
-        team1_obj = Team.query.get(m.team1) if m.team1 else None
-        team2_obj = Team.query.get(m.team2) if m.team2 else None
-
-        # Get team names - prefer initial (for dynamic teams), then registration pseudonym, then team name
-        # Handle empty strings and missing registration (e.g. dynamic/unregistered team)
-        from app.services.registration_resolver import team_registration_for_tournament
-
-        tournament_obj = Tournament.query.get(tournament_url)
-        reg1 = team_registration_for_tournament(tournament_obj, m.team1) if (tournament_obj and m.team1) else None
-        team1_name = (
-            (reg1.pseudonym if reg1 and reg1.pseudonym else (team1_obj.name if team1_obj else m.team1_initial))
-            if m.team1
-            else m.team1_initial
-        )
-        reg2 = team_registration_for_tournament(tournament_obj, m.team2) if (tournament_obj and m.team2) else None
-        team2_name = (
-            (reg2.pseudonym if reg2 and reg2.pseudonym else (team2_obj.name if team2_obj else m.team2_initial))
-            if m.team2
-            else m.team2_initial
-        )
-
-        # Only include photos if there's an actual team object with a photo (not dynamic teams)
-        team1_photo = team1_obj.profile_photo if (team1_obj and team1_obj.profile_photo and m.team1) else None
-        team2_photo = team2_obj.profile_photo if (team2_obj and team2_obj.profile_photo and m.team2) else None
-        team1_shortname = reg1.shortname if (reg1 and reg1.shortname) else None
-        team2_shortname = reg2.shortname if (reg2 and reg2.shortname) else None
-        return team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname
-
-    # If there's an active match, return match state
-    if match:
-        team1_name, team2_name, team1_photo, team2_photo, team1_shortname, team2_shortname = get_team_info(match)
-
-        # Get points and calculate scores by set
-        points = Point.query.filter_by(match=match.uuid).order_by(Point.stamp).all()
-
-        # Calculate scores by set
-        sets = sorted(set(p.set_number for p in points if p.set_number))
-        scores_by_set = {}
-        for set_num in sets:
-            set_points = [p for p in points if p.set_number == set_num and not p.rerolled]
-            scores_by_set[set_num] = {
-                "team1_score": sum(1 for p in set_points if p.winner == "TEAM1"),
-                "team2_score": sum(1 for p in set_points if p.winner == "TEAM2"),
-            }
+    if state.active:
+        match = state.active.match
+        team1, team2 = state.active.team1, state.active.team2
 
         # For STONES matches, get stones info and points for live stones during a point
         stones_info = None
         points_for_stones = None
-        if match.set_type == "STONES":
+        if match.set_type == SetType.STONES:
             stones_info = {
                 "stones_per_set": match.stones_per_set or 100,
                 "stones_remaining": match.stones_remaining,
             }
-
-            def _iso_z(dt):
-                if dt is None:
-                    return None
-                s = dt.isoformat()
-                if dt.tzinfo is None and not s.endswith("Z"):
-                    s = s + "Z"
-                return s
-
             points_for_stones = [
                 {
-                    "stamp": _iso_z(p.stamp),
-                    "end_stamp": _iso_z(p.end_stamp),
+                    "stamp": to_iso_z(p.stamp).unwrap_or(None),
+                    "end_stamp": to_iso_z(p.end_stamp).unwrap_or(None),
                     "stones_at_start": p.stones_at_start,
                 }
-                for p in points
+                for p in state.points
             ]
 
         return jsonify(
             {
                 "has_active_match": True,
                 "match_id": match.uuid,
-                "team1_name": team1_name,
-                "team2_name": team2_name,
-                "team1_photo": team1_photo,
-                "team2_photo": team2_photo,
-                "team1_shortname": team1_shortname,
-                "team2_shortname": team2_shortname,
-                "scores_by_set": scores_by_set,
-                "sets": sets,
+                "team1_name": team1.name,
+                "team2_name": team2.name,
+                "team1_photo": team1.photo,
+                "team2_photo": team2.photo,
+                "team1_shortname": team1.shortname,
+                "team2_shortname": team2.shortname,
+                "scores_by_set": {
+                    number: {"team1_score": team1_score, "team2_score": team2_score}
+                    for number, (team1_score, team2_score) in state.set_scores.items()
+                },
+                "sets": list(state.set_scores),
                 "stones_info": stones_info,
                 "points_for_stones": points_for_stones,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
 
-    # No active match - find previous and next matches
-    # Get all matches on this field, ordered by time
-    all_field_matches = (
-        Match.query.filter_by(event=tournament_url, field=field_name)
-        .order_by(Match.nominal_start_time.asc(), Match.completed_time.asc())
-        .all()
-    )
+    def summary(scoreboard_match):
+        return {
+            "team1_name": scoreboard_match.team1.name or "Team 1",
+            "team2_name": scoreboard_match.team2.name or "Team 2",
+            "team1_photo": scoreboard_match.team1.photo,
+            "team2_photo": scoreboard_match.team2.photo,
+            "team1_shortname": scoreboard_match.team1.shortname,
+            "team2_shortname": scoreboard_match.team2.shortname,
+        }
 
-    # Find most recent completed or skipped match (previous) - skip BREAK/JOIN matches
-    prev_match = None
-    for m in reversed(all_field_matches):
-        if (
-            m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
-            and m.completed_time
-            and m.schedule_type not in (ScheduleType.BREAK, ScheduleType.STATBREAK, ScheduleType.JOIN)
-        ):
-            prev_match = m
-            break
-
-    # Find next match (not started or ready to start) - skip BREAK/JOIN matches
-    next_match = None
-    for m in all_field_matches:
-        if m.schedule_type not in (ScheduleType.BREAK, ScheduleType.STATBREAK, ScheduleType.JOIN) and (
-            m.status in (MatchStatus.NOT_STARTED, MatchStatus.IN_PROGRESS)
-            or (m.status in (MatchStatus.COMPLETED, MatchStatus.SKIPPED) and not m.completed_time)
-        ):
-            next_match = m
-            break
-
-    # Get team info for previous and next matches
     prev_data = None
-    if prev_match:
-        (
-            prev_team1_name,
-            prev_team2_name,
-            prev_team1_photo,
-            prev_team2_photo,
-            prev_team1_shortname,
-            prev_team2_shortname,
-        ) = get_team_info(prev_match)
-        prev_team1_name = prev_team1_name or "Team 1"
-        prev_team2_name = prev_team2_name or "Team 2"
-        prev_data = {
-            "team1_name": prev_team1_name,
-            "team2_name": prev_team2_name,
-            "team1_photo": prev_team1_photo,
-            "team2_photo": prev_team2_photo,
-            "team1_shortname": prev_team1_shortname,
-            "team2_shortname": prev_team2_shortname,
-            "winner": prev_match.match_winner,
-        }
-
-    next_data = None
-    if next_match:
-        (
-            next_team1_name,
-            next_team2_name,
-            next_team1_photo,
-            next_team2_photo,
-            next_team1_shortname,
-            next_team2_shortname,
-        ) = get_team_info(next_match)
-        next_team1_name = next_team1_name or "Team 1"
-        next_team2_name = next_team2_name or "Team 2"
-        next_data = {
-            "team1_name": next_team1_name,
-            "team2_name": next_team2_name,
-            "team1_photo": next_team1_photo,
-            "team2_photo": next_team2_photo,
-            "team1_shortname": next_team1_shortname,
-            "team2_shortname": next_team2_shortname,
-        }
+    if state.previous:
+        prev_data = summary(state.previous) | {"winner": state.previous.match.match_winner}
 
     return jsonify(
         {
             "has_active_match": False,
             "prev_match": prev_data,
-            "next_match": next_data,
+            "next_match": summary(state.next) if state.next else None,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )

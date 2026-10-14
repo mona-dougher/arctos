@@ -246,6 +246,7 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.players import bp as players_bp
     from app.routes.teams import bp as teams_bp
     from app.routes.oauth import bp as oauth_bp
+    from app.routes.api_v1 import bp as api_v1_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(tournaments_bp)
@@ -259,6 +260,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(players_bp)
     app.register_blueprint(teams_bp)
     app.register_blueprint(oauth_bp)
+    app.register_blueprint(api_v1_bp)
 
     # Register template filters
     from app import filters
