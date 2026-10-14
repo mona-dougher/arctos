@@ -24,7 +24,10 @@ pub fn Login() -> Element {
     let mut err = use_signal(|| None::<String>);
     let navigator = use_navigator();
     let auth_invalidate = use_auth_invalidate();
-    let google_url = format!("{}/_api/auth/google/login", api::base_url());
+    let google_url = match next_url_from_query() {
+        Some(next) => format!("{}/_api/auth/google/login?next={}", api::base_url(), urlencoding::encode(&next)),
+        None => format!("{}/_api/auth/google/login", api::base_url()),
+    };
 
     rsx! {
         div { class: "row justify-content-center",

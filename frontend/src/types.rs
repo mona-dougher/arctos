@@ -1950,3 +1950,58 @@ pub struct SideCompManageResults {
     pub finalized: bool,
     pub results: Vec<SideCompManageResultRow>,
 }
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthScope {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthConsentClient {
+    pub client_id: String,
+    pub name: String,
+    pub homepage_url: Option<String>,
+    pub owner_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthConsentUser {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthConsent {
+    pub client: OAuthConsentClient,
+    pub scopes: Vec<OAuthScope>,
+    pub user: OAuthConsentUser,
+}
+
+/// The authorization request either needs the user's consent or must
+/// send them straight back to the app (e.g. with an error).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum OAuthAuthorizationRequest {
+    Redirect { redirect: String },
+    Consent(OAuthConsent),
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthClient {
+    pub client_id: String,
+    pub name: String,
+    pub homepage_url: Option<String>,
+    pub redirect_uris: Vec<String>,
+    pub confidential: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ConnectedApp {
+    pub client_id: String,
+    pub name: String,
+    pub homepage_url: Option<String>,
+    pub scopes: Vec<OAuthScope>,
+    pub last_used_at: Option<String>,
+}

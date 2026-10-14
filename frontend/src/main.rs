@@ -198,6 +198,15 @@ enum Route {
 
     #[route("/data-accessibility-guide.md")]
     DataAccessibilityGuide {},
+
+    #[route("/developers.md")]
+    Developers {},
+
+    #[route("/developers/apps")]
+    DeveloperApps {},
+
+    #[route("/oauth/authorize")]
+    OAuthAuthorize {},
 }
 
 fn main() {

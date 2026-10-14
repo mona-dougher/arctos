@@ -27,8 +27,15 @@ All blueprints register with `url_prefix="/_api"`. The waivers blueprint
 is the one exception, intentionally - the frontend links to
 `/<event>/waiver` directly.
 
-`/api/` (no underscore) is **reserved** for a hypothetical future
-public API. Never use it.
+`/api/` (no underscore) is the stable, public surface for third-party
+apps, documented in [`docs/developers.md`](../../docs/developers.md).
+Only add routes there deliberately: they're a contract. They
+authenticate with OAuth bearer tokens via
+`app.utils.oauth_server.require_bearer`, never with the session
+cookie, and send `Access-Control-Allow-Origin: *`. Bearer tokens are
+accepted nowhere else; `/_api/` stays session-only. The `oauth`
+blueprint hosts both its public `/api/oauth/...` endpoints and the
+SPA's `/_api/oauth/...` helpers, so it registers without a prefix.
 
 ### Return JSON
 

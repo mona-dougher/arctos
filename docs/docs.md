@@ -50,6 +50,10 @@ For TOs
  - [OBS Scoreboard Integration](#obs-scoreboard-integration)
  - [Recording Matches](#recording-matches)
 
+For Developers
+
+ - [Sign in with Arctos and the Arctos API](developers.md)
+
 
 ---
 

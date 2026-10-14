@@ -134,7 +134,8 @@ def google_login():
 
     ``GET /_api/auth/google/login``
 
-    Redirects the user to Google's consent screen.  Returns an error flash
+    Redirects the user to Google's consent screen. An optional same-site
+    ``next`` path is where the user lands after signing in.  Returns an error flash
     and a redirect to the frontend if Google OAuth is not configured.
 
     Returns:
@@ -148,6 +149,11 @@ def google_login():
         )
         return _redirect_to_frontend("/")
 
+    next_path = request.args.get("next", "")
+    if next_path.startswith("/") and not next_path.startswith("//"):
+        session["login_next"] = next_path
+    else:
+        session.pop("login_next", None)
     redirect_uri = _google_callback_uri()
     google = oauth.google
     return google.authorize_redirect(redirect_uri)
@@ -201,7 +207,7 @@ def google_callback():
         if user:
             _login_persistent(user)
             flash("Successfully logged in with Google!", "success")
-            return _redirect_to_frontend("/")
+            return _redirect_to_frontend(session.pop("login_next", "/"))
 
         session["google_oauth_data"] = {
             "google_id": google_id,

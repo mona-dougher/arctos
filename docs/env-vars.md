@@ -57,6 +57,19 @@ same server is reachable on multiple public domains, add each domain's
 Cloud Console.
 
 
+## Sign in with Arctos
+
+Arctos's own OAuth provider (see [For Developers](developers.md)) refuses
+requests that don't arrive over HTTPS. Production gets HTTPS from
+gunicorn's TLS (`just run`) or from a proxy that forwards to it over
+HTTPS. The reverse proxy must also forward `/api/` to gunicorn, like
+`/_api/`.
+
+`AUTHLIB_INSECURE_TRANSPORT`
+: Set to `1` to allow the OAuth endpoints over plain HTTP, e.g. with
+  `just dev`. Never set it in production.
+
+
 ## Youtube config
 
 `YOUTUBE_UPLOAD_CLIENT_ID`

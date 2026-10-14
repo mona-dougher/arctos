@@ -22,6 +22,7 @@ from app.models.penalty_type import PenaltyType
 from app.models.records import Injury, HeadRef
 from app.models.sidecomp import SideComp, SideCompEntryNumber, SideCompRegistration, SideCompResult
 from app.models.camera import Camera
+from app.models.oauth import OAuthAuthorizationCode, OAuthClient, OAuthToken
 from app.models.normalised import (
     CameraTimepoint,
     HeadRefAllowList,
@@ -51,6 +52,9 @@ __all__ = [
     "BracketLabeledTeam",
     "BracketImage",
     "Camera",
+    "OAuthClient",
+    "OAuthAuthorizationCode",
+    "OAuthToken",
     "PenaltyType",
     "Injury",
     "HeadRef",

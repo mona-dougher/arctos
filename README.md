@@ -239,7 +239,7 @@ Take `POST /_api/<tournament_url>/register-team`:
 1. **Frontend** (`frontend/src/`) builds a form, POSTs via `reqwest`
    with credentials.
 2. **nginx** (in production) proxies anything starting with `/_api/`
-   to gunicorn; everything else is the SPA. In dev with
+   or `/api/` to gunicorn; everything else is the SPA. In dev with
    `ARCTOS_CORS_DEV=1` the browser hits Flask directly.
 3. **Flask** routes the request to
    `app/routes/registration.py::register_team_for_tournament`.
