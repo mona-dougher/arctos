@@ -1,8 +1,8 @@
 # For Developers
 
-Arctos lets other apps act on behalf of Arctos users without ever seeing
-their passwords. This page explains how to register an app, how to let
-people "Sign in with Arctos", and how to call the [Arctos API](#api-reference)
+Arctos has a comprehensive API for programmatic access to data and
+some functionality. This page explains how to register an app, how to
+let people "Sign in with Arctos", and how to call Arctos endpoints
 with the resulting tokens.
 
 Arctos is an OAuth 2.0 authorization server. If you have used "Sign in
@@ -122,11 +122,11 @@ returns `{"id": "<username>", "name": "<display name>", "type": "player" | "team
   `Authorization: Bearer <access token>`.
 - **Refresh tokens** get a new access token when the old one expires:
 
-  ```
-  POST /api/oauth/token
+```
+POST /api/oauth/token
 
-  grant_type=refresh_token&refresh_token=<refresh token>&client_id=<client id>
-  ```
+grant_type=refresh_token&refresh_token=<refresh token>&client_id=<client id>
+```
 
   Every refresh returns a **new refresh token**; store it and throw the old
   one away. Using an old refresh token again is treated as theft and
@@ -138,11 +138,11 @@ returns `{"id": "<username>", "name": "<display name>", "type": "player" | "team
   without ever sharing the refresh token.
 - **Revoke** tokens when the user signs out:
 
-  ```
-  POST /api/oauth/revoke
+```
+POST /api/oauth/revoke
 
-  token=<refresh or access token>&client_id=<client id>
-  ```
+token=<refresh or access token>&client_id=<client id>
+```
 
 Users can see every app they've signed in to in the **Connected apps**
 section of their profile, and disconnect any of them, which revokes all
