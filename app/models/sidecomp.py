@@ -37,6 +37,11 @@ class SideComp(db.Model):
         finalized: When ``True``, results are locked as final: the
             competition cannot be activated again, and the public results
             page is labeled Final rather than Unofficial. Irreversible.
+        track_losses: When ``True``, losses are logged and standings rank by
+            win percentage; when ``False``, only wins are logged and ranked.
+            Applies to every type except chain/breaking.
+        track_chain_losses: :attr:`track_losses` for chains in chain/breaking.
+        track_break_losses: :attr:`track_losses` for breakers in chain/breaking.
         allowed_weapons: JSON-encoded list of :class:`Pompfen` member names
             that players may select when registering. Defaults to all.
         only_show_top_n_results: When ``None``, the results page shows all
@@ -56,6 +61,9 @@ class SideComp(db.Model):
     registration_open = db.Column(db.Boolean, nullable=False, default=False)
     active = db.Column(db.Boolean, nullable=False, default=False)
     finalized = db.Column(db.Boolean, nullable=False, default=False)
+    track_losses = db.Column(db.Boolean, nullable=False, default=False)
+    track_chain_losses = db.Column(db.Boolean, nullable=False, default=False)
+    track_break_losses = db.Column(db.Boolean, nullable=False, default=False)
     allowed_weapons = db.Column(
         db.Text,
         nullable=False,
@@ -97,6 +105,14 @@ class SideComp(db.Model):
     def results_page_enabled(self) -> bool:
         """Return whether the public results page should be shown."""
         return self.only_show_top_n_results is None or self.only_show_top_n_results != 0
+
+    def tracks_losses_for_weapon(self, weapon_value: int) -> bool:
+        """Return whether losses count for a registrant using *weapon_value*."""
+        if self.type == SideCompType.CHAIN_BREAKING:
+            if weapon_value == Pompfen.CHAIN.value:
+                return bool(self.track_chain_losses)
+            return bool(self.track_break_losses)
+        return bool(self.track_losses)
 
 
 class SideCompRegistration(db.Model):

@@ -336,6 +336,9 @@ class SideCompService:
         description: Optional[str] = None,
         registration_open: Optional[bool] = None,
         active: Optional[bool] = None,
+        track_losses: Optional[bool] = None,
+        track_chain_losses: Optional[bool] = None,
+        track_break_losses: Optional[bool] = None,
         allowed_weapons: Optional[list] = None,
         only_show_top_n_results: object = ...,
     ) -> Result["SideComp", ArctosError]:
@@ -358,6 +361,12 @@ class SideCompService:
                 ``None``, the field is left untouched.
             active: New value for the results-entry gate. If ``None``, the
                 field is left untouched.
+            track_losses: New value for loss tracking (non chain/breaking).
+                If ``None``, the field is left untouched.
+            track_chain_losses: New value for loss tracking of chains in
+                chain/breaking. If ``None``, the field is left untouched.
+            track_break_losses: New value for loss tracking of breakers in
+                chain/breaking. If ``None``, the field is left untouched.
             allowed_weapons: New list of enabled :class:`~app.domain.enums.Pompfen`
                 names. If ``None``, the field is left untouched.
             only_show_top_n_results: Sentinel ``...`` leaves the field untouched.
@@ -402,6 +411,13 @@ class SideCompService:
             if want_active and sc.finalized:
                 return Err(ValidationError("This side competition has been finalized and cannot be reactivated"))
             sc.active = want_active
+
+        if track_losses is not None:
+            sc.track_losses = bool(track_losses)
+        if track_chain_losses is not None:
+            sc.track_chain_losses = bool(track_chain_losses)
+        if track_break_losses is not None:
+            sc.track_break_losses = bool(track_break_losses)
 
         if allowed_weapons is not None:
             parsed_weapons = _parse_allowed_weapons(allowed_weapons)
@@ -856,6 +872,7 @@ class SideCompService:
                     "team_id": team_id,
                     "team_shortname": shortname,
                     "team_profile_photo": team.profile_photo if team else None,
+                    "track_losses": sc.tracks_losses_for_weapon(reg.weapon),
                 }
             )
 
@@ -898,6 +915,9 @@ class SideCompService:
         if reg is None:
             return Err(NotFoundError("Registration not found"))
 
+        if points < 0 and not sc.tracks_losses_for_weapon(reg.weapon):
+            return Err(ValidationError("Losses are not tracked for this player"))
+
         result = SideCompResult(
             comp=comp_id,
             player=reg.id,
@@ -929,6 +949,35 @@ class SideCompService:
         result.flagged = bool(flagged)
         db.session.commit()
         return Ok(result)
+
+    @staticmethod
+    @allow_Q
+    def delete_result(
+        result_uuid: str,
+        *,
+        actor_user_id: str,
+    ) -> Result[None, ArctosError]:
+        """Undo a logged point. Only the ref who logged it may delete it, and only
+        while the side competition is still accepting results."""
+        from models import SideComp, SideCompResult, db
+
+        result = SideCompResult.query.get(result_uuid)
+        if result is None:
+            return Err(NotFoundError("Result not found"))
+
+        if result.ref != actor_user_id:
+            return Err(UnauthorizedError("You can only undo points you entered"))
+
+        sc = SideComp.query.get(result.comp)
+        if sc is None:
+            return Err(NotFoundError("Side competition not found"))
+
+        if sc.finalized or not sc.active:
+            return Err(ValidationError("This side competition is not active; results cannot be changed"))
+
+        db.session.delete(result)
+        db.session.commit()
+        return Ok(None)
 
     @staticmethod
     @allow_Q
@@ -1061,6 +1110,9 @@ class SideCompService:
                     "jersey_name": event_reg.jersey_name if event_reg else None,
                     "jersey_number": event_reg.jersey_number if event_reg else None,
                     "team_shortname": shortname,
+                    "untracked": result.points < 0
+                    and reg is not None
+                    and not sc.tracks_losses_for_weapon(reg.weapon),
                 }
             )
 
@@ -1083,7 +1135,7 @@ class SideCompService:
         top-N cut is applied. Weapon filtering is left to the client so ranks
         remain global within each table.
         """
-        from sqlalchemy import func
+        from sqlalchemy import case, func
 
         from app.domain.enums import Pompfen, RegistrationStatus, SideCompType
         from app.services.registration_resolver import (
@@ -1102,7 +1154,8 @@ class SideCompService:
         score_rows = (
             db.session.query(
                 SideCompResult.player,
-                func.coalesce(func.sum(SideCompResult.points), 0),
+                func.coalesce(func.sum(case((SideCompResult.points > 0, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((SideCompResult.points < 0, 1), else_=0)), 0),
             )
             .filter(
                 SideCompResult.comp == comp_id,
@@ -1111,7 +1164,8 @@ class SideCompService:
             .group_by(SideCompResult.player)
             .all()
         )
-        wins_by_reg = {reg_id: int(total or 0) for reg_id, total in score_rows}
+        wins_by_reg = {reg_id: int(wins or 0) for reg_id, wins, _ in score_rows}
+        losses_by_reg = {reg_id: int(losses or 0) for reg_id, _, losses in score_rows}
 
         player_ids = [r.player for r in regs]
         players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
@@ -1131,7 +1185,10 @@ class SideCompService:
                         team_shortnames[tr.team] = tr.shortname
                         team_pseudonyms[tr.team] = tr.pseudonym
 
-        def row_for(reg: SideCompRegistration, rank: int, wins: int) -> dict:
+        def row_for(reg: SideCompRegistration, rank: int, track_losses: bool) -> dict:
+            wins = wins_by_reg.get(reg.id, 0)
+            losses = losses_by_reg.get(reg.id, 0) if track_losses else None
+            win_percentage = 100 * wins / (wins + losses) if losses is not None and wins + losses > 0 else None
             player = players_by_id.get(reg.player)
             event_reg = event_regs.get(reg.player)
             team_id = event_reg.team if event_reg else None
@@ -1158,29 +1215,37 @@ class SideCompService:
                 if team_id and team_id in teams_by_id
                 else None,
                 "wins": wins,
+                "losses": losses,
+                "win_percentage": win_percentage,
                 "rank": rank,
             }
 
-        def build_table(table_id: str, title: str, members: list) -> dict:
-            scored = [(reg, wins_by_reg.get(reg.id, 0)) for reg in members]
-            scored.sort(key=lambda item: (-item[1], item[0].entry_number))
-            ranked_rows = []
-            for idx, (reg, wins) in enumerate(scored, start=1):
-                ranked_rows.append(row_for(reg, idx, wins))
+        def build_table(table_id: str, title: str, members: list, track_losses: bool) -> dict:
+            def sort_key(reg: SideCompRegistration):
+                wins = wins_by_reg.get(reg.id, 0)
+                if not track_losses:
+                    return (-wins, reg.entry_number)
+                games = wins + losses_by_reg.get(reg.id, 0)
+                if games == 0:
+                    return (1, 0.0, 0, reg.entry_number)
+                return (0, -wins / games, -wins, reg.entry_number)
+
+            ranked = sorted(members, key=sort_key)
+            ranked_rows = [row_for(reg, idx, track_losses) for idx, reg in enumerate(ranked, start=1)]
             top_n = sc.only_show_top_n_results
             if top_n is not None and top_n > 0:
                 ranked_rows = ranked_rows[:top_n]
-            return {"id": table_id, "title": title, "rows": ranked_rows}
+            return {"id": table_id, "title": title, "track_losses": track_losses, "rows": ranked_rows}
 
         if sc.type == SideCompType.CHAIN_BREAKING:
             chains = [r for r in regs if r.weapon == Pompfen.CHAIN.value]
             breaks = [r for r in regs if r.weapon != Pompfen.CHAIN.value]
             tables = [
-                build_table("chains", "Chains", chains),
-                build_table("breaks", "Breaks", breaks),
+                build_table("chains", "Chains", chains, bool(sc.track_chain_losses)),
+                build_table("breaks", "Breaks", breaks, bool(sc.track_break_losses)),
             ]
         else:
-            tables = [build_table("all", "Standings", regs)]
+            tables = [build_table("all", "Standings", regs, bool(sc.track_losses))]
 
         return Ok(
             {

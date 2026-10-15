@@ -108,6 +108,10 @@ fn StandingsTableView(table: SideCompStandingTable) -> Element {
                                 th { "Player" }
                                 th { "Role" }
                                 th { "Wins" }
+                                if table.track_losses {
+                                    th { "Losses" }
+                                    th { "Win %" }
+                                }
                             }
                         }
                         tbody {
@@ -144,6 +148,15 @@ fn StandingsTableView(table: SideCompStandingTable) -> Element {
                                         }
                                     }
                                     td { class: "fw-bold", "{row.wins}" }
+                                    if table.track_losses {
+                                        td { "{row.losses.unwrap_or(0)}" }
+                                        td { class: "fw-bold",
+                                            match row.win_percentage {
+                                                Some(percentage) => format!("{percentage:.0}%"),
+                                                None => "—".to_string(),
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

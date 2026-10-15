@@ -49,6 +49,9 @@ def _sc_payload(sc):
         "registration_open": bool(sc.registration_open),
         "active": bool(sc.active),
         "finalized": bool(sc.finalized),
+        "track_losses": bool(sc.track_losses),
+        "track_chain_losses": bool(sc.track_chain_losses),
+        "track_break_losses": bool(sc.track_break_losses),
         "allowed_weapons": sc.allowed_weapon_names(),
         "only_show_top_n_results": sc.only_show_top_n_results,
         "results_page_enabled": sc.results_page_enabled(),
@@ -177,6 +180,9 @@ def update(comp_id: int):
         description=data.get("description"),
         registration_open=data.get("registration_open"),
         active=data.get("active"),
+        track_losses=data.get("track_losses"),
+        track_chain_losses=data.get("track_chain_losses"),
+        track_break_losses=data.get("track_break_losses"),
         allowed_weapons=data.get("allowed_weapons"),
         only_show_top_n_results=top_n_arg,
     )
@@ -191,6 +197,9 @@ def update(comp_id: int):
             "registration_open": bool(sc.registration_open),
             "active": bool(sc.active),
             "finalized": bool(sc.finalized),
+            "track_losses": bool(sc.track_losses),
+            "track_chain_losses": bool(sc.track_chain_losses),
+            "track_break_losses": bool(sc.track_break_losses),
             "allowed_weapons": sc.allowed_weapon_names(),
             "only_show_top_n_results": sc.only_show_top_n_results,
             "results_page_enabled": sc.results_page_enabled(),
@@ -474,6 +483,14 @@ def patch_result(result_uuid: str):
         actor_user_id=current_user.id,
     )
     return json_from_result(res, ok_to_payload=lambda result: result.to_payload())
+
+
+@bp.route("/sidecomps/results/<result_uuid>", methods=["DELETE"])
+@login_required
+def delete_result(result_uuid: str):
+    """Authenticated: undo a point the current user logged."""
+    res = SideCompService.delete_result(result_uuid, actor_user_id=current_user.id)
+    return json_from_result(res, ok_to_payload=lambda _: {})
 
 
 @bp.route("/sidecomps/<int:comp_id>/manage-results", methods=["GET"])

@@ -20,20 +20,22 @@ struct HistoryGroup {
     jersey_name: String,
     team_shortname: String,
     weapon: Option<String>,
-    points: i32,
+    is_win: bool,
+    count: usize,
     flagged: bool,
     result_uuids: Vec<String>,
 }
 
 fn collapse_history(events: &[HistoryEvent]) -> Vec<HistoryGroup> {
-    // Build from oldest to newest so consecutive same-player events merge,
-    // and the resulting list is left→right chronological (newest on the right).
+    // Build from oldest to newest so consecutive same-player, same-outcome
+    // events merge, and the resulting list is chronological (newest last).
     let chronological: Vec<&HistoryEvent> = events.iter().rev().collect();
     let mut groups: Vec<HistoryGroup> = Vec::new();
     for ev in chronological {
+        let is_win = ev.result.points > 0;
         if let Some(last) = groups.last_mut() {
-            if last.registration_id == ev.result.player {
-                last.points += ev.result.points;
+            if last.registration_id == ev.result.player && last.is_win == is_win {
+                last.count += 1;
                 last.flagged = last.flagged || ev.result.flagged;
                 last.result_uuids.push(ev.result.uuid.clone());
                 continue;
@@ -45,7 +47,8 @@ fn collapse_history(events: &[HistoryEvent]) -> Vec<HistoryGroup> {
             jersey_name: ev.jersey_name.clone(),
             team_shortname: ev.team_shortname.clone(),
             weapon: ev.weapon.clone(),
-            points: ev.result.points,
+            is_win,
+            count: 1,
             flagged: ev.result.flagged,
             result_uuids: vec![ev.result.uuid.clone()],
         });
@@ -88,6 +91,7 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
     let mut history = use_signal(Vec::<HistoryEvent>::new);
     let mut error = use_signal(|| None::<String>);
     let mut busy_reg = use_signal(|| None::<i32>);
+    let mut undo_busy = use_signal(|| false);
 
     // Keep the newest history entry visible on the right; older entries overflow left.
     use_effect(move || {
@@ -151,6 +155,9 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                 margin-bottom: 0.55rem;
                 box-shadow: 0 1px 2px rgba(0,0,0,0.06);
             }}
+            .sc-player-row.wins-only {{
+                grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem 3.2rem;
+            }}
             .sc-entry-num {{
                 font-weight: 700;
                 font-size: 0.95rem;
@@ -161,7 +168,7 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                 height: 3.2rem;
                 border: none;
                 border-radius: 0.65rem;
-                font-size: 1.75rem;
+                font-size: 1.3rem;
                 font-weight: 700;
                 line-height: 1;
                 color: #fff;
@@ -204,23 +211,26 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                 border-top: 1px solid #ddd;
                 border-bottom: 1px solid #ddd;
                 background: #fff;
-                padding: 0.45rem 0.5rem;
+                padding: 0.3rem 0.35rem;
                 overflow-x: auto;
                 display: flex;
                 flex-direction: row;
-                gap: 0.5rem;
-                min-height: 4.6rem;
+                gap: 0.3rem;
+                min-height: 3.4rem;
                 -webkit-overflow-scrolling: touch;
+            }}
+            .sc-history > :first-child {{
+                margin-left: auto;
             }}
             .sc-hist-card {{
                 position: relative;
                 flex: 0 0 auto;
-                width: 7.5rem;
+                width: 4.9rem;
                 background: #f3f4f6;
-                border-radius: 0.55rem;
-                padding: 0.4rem 0.45rem 0.35rem;
-                font-size: 0.78rem;
-                line-height: 1.15;
+                border-radius: 0.45rem;
+                padding: 0.22rem 0.25rem 0.2rem;
+                font-size: 0.66rem;
+                line-height: 1.1;
                 cursor: pointer;
                 border: 1px solid transparent;
                 display: flex;
@@ -228,7 +238,7 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                 align-items: center;
                 justify-content: center;
                 text-align: center;
-                gap: 0.15rem;
+                gap: 0.05rem;
             }}
             .sc-hist-card.flagged {{
                 border-color: #c62828;
@@ -236,29 +246,28 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
             }}
             .sc-hist-flag {{
                 position: absolute;
-                top: 0.15rem;
-                right: 0.25rem;
+                top: 0.1rem;
+                right: 0.15rem;
                 color: #c62828;
-                font-size: 0.75rem;
+                font-size: 0.6rem;
             }}
             .sc-hist-line {{
                 width: 100%;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 0.25rem;
+                gap: 0.2rem;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
             }}
             .sc-hist-points {{
                 text-align: center;
-                font-size: 1.15rem;
+                font-size: 0.85rem;
                 font-weight: 800;
-                margin-top: 0.1rem;
             }}
-            .sc-hist-points.pos {{ color: #2e7d32; }}
-            .sc-hist-points.neg {{ color: #c62828; }}
+            .sc-hist-points.win {{ color: #2e7d32; }}
+            .sc-hist-points.loss {{ color: #c62828; }}
             .sc-numpad {{
                 flex-shrink: 0;
                 display: grid;
@@ -290,7 +299,27 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                     class: if query().is_empty() { "sc-search-display placeholder flex-grow-1 text-center" } else { "sc-search-display flex-grow-1 text-center" },
                     if query().is_empty() { "type to search" } else { "{query}" }
                 }
-                span { style: "width: 3.5rem;" }
+                button {
+                    class: "btn btn-sm btn-outline-secondary",
+                    disabled: history().is_empty() || undo_busy(),
+                    onclick: move |_| {
+                        let Some(last) = history().first().cloned() else {
+                            return;
+                        };
+                        undo_busy.set(true);
+                        error.set(None);
+                        spawn(async move {
+                            match api::sidecomp_delete_result(&last.result.uuid).await {
+                                Ok(_) => {
+                                    history.write().retain(|ev| ev.result.uuid != last.result.uuid);
+                                }
+                                Err(e) => error.set(Some(e)),
+                            }
+                            undo_busy.set(false);
+                        });
+                    },
+                    "Undo"
+                }
             }
 
             if let Some(err) = error() {
@@ -338,33 +367,37 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                                     let hist_short = shortname.clone();
                                     let hist_short_plus = shortname.clone();
                                     rsx! {
-                                        div { class: "sc-player-row", key: "{reg_id}",
+                                        div {
+                                            class: if p.track_losses { "sc-player-row" } else { "sc-player-row wins-only" },
+                                            key: "{reg_id}",
                                             div { class: "sc-entry-num", "#{p.entry_number}" }
-                                            button {
-                                                class: "sc-pm-btn minus",
-                                                disabled: busy,
-                                                onclick: move |_| {
-                                                    let player = p_minus.clone();
-                                                    let team_short = hist_short.clone();
-                                                    busy_reg.set(Some(player.registration_id));
-                                                    error.set(None);
-                                                    spawn(async move {
-                                                        match api::sidecomp_log_result(comp_id, player.registration_id, -1).await {
-                                                            Ok(result) => {
-                                                                history.write().insert(0, HistoryEvent {
-                                                                    result,
-                                                                    entry_number: player.entry_number,
-                                                                    jersey_name: player.jersey_name.clone().unwrap_or_else(|| "—".to_string()),
-                                                                    team_shortname: team_short,
-                                                                    weapon: player.weapon.clone(),
-                                                                });
+                                            if p.track_losses {
+                                                button {
+                                                    class: "sc-pm-btn minus",
+                                                    disabled: busy,
+                                                    onclick: move |_| {
+                                                        let player = p_minus.clone();
+                                                        let team_short = hist_short.clone();
+                                                        busy_reg.set(Some(player.registration_id));
+                                                        error.set(None);
+                                                        spawn(async move {
+                                                            match api::sidecomp_log_result(comp_id, player.registration_id, -1).await {
+                                                                Ok(result) => {
+                                                                    history.write().insert(0, HistoryEvent {
+                                                                        result,
+                                                                        entry_number: player.entry_number,
+                                                                        jersey_name: player.jersey_name.clone().unwrap_or_else(|| "—".to_string()),
+                                                                        team_shortname: team_short,
+                                                                        weapon: player.weapon.clone(),
+                                                                    });
+                                                                }
+                                                                Err(e) => error.set(Some(e)),
                                                             }
-                                                            Err(e) => error.set(Some(e)),
-                                                        }
-                                                        busy_reg.set(None);
-                                                    });
-                                                },
-                                                "−"
+                                                            busy_reg.set(None);
+                                                        });
+                                                    },
+                                                    "+L"
+                                                }
                                             }
                                             div { class: "sc-center",
                                                 AvatarCircle {
@@ -421,7 +454,7 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                                                         busy_reg.set(None);
                                                     });
                                                 },
-                                                "+"
+                                                "+W"
                                             }
                                         }
                                     }
@@ -446,12 +479,12 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                             {
                                 let uuids = g.result_uuids.clone();
                                 let currently_flagged = g.flagged;
-                                let points_label = if g.points > 0 {
-                                    format!("+{}", g.points)
+                                let points_label = if g.is_win {
+                                    format!("+{} W", g.count)
                                 } else {
-                                    format!("{}", g.points)
+                                    format!("+{} L", g.count)
                                 };
-                                let points_class = if g.points >= 0 { "sc-hist-points pos" } else { "sc-hist-points neg" };
+                                let points_class = if g.is_win { "sc-hist-points win" } else { "sc-hist-points loss" };
                                 let card_class = if g.flagged { "sc-hist-card flagged" } else { "sc-hist-card" };
                                 let weapon = g.weapon.clone().unwrap_or_default();
                                 rsx! {

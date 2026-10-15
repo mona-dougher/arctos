@@ -14,6 +14,9 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
     let mut registration_open = use_signal(|| false);
     let mut active = use_signal(|| false);
     let mut finalized = use_signal(|| false);
+    let mut track_losses = use_signal(|| false);
+    let mut track_chain_losses = use_signal(|| false);
+    let mut track_break_losses = use_signal(|| false);
     let mut allowed_weapons = use_signal(default_allowed_weapons);
     let mut top_n_text = use_signal(String::new);
     let mut initialised = use_signal(|| false);
@@ -27,6 +30,9 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
             registration_open.set(d.registration_open);
             active.set(d.active);
             finalized.set(d.finalized);
+            track_losses.set(d.track_losses);
+            track_chain_losses.set(d.track_chain_losses);
+            track_break_losses.set(d.track_break_losses);
             if d.allowed_weapons.is_empty() {
                 allowed_weapons.set(Vec::new());
             } else {
@@ -83,6 +89,10 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         let d = description();
                         let open = registration_open();
                         let is_active = active();
+                        let is_chain_breaking = t == "CHAIN_BREAKING";
+                        let losses = (!is_chain_breaking).then_some(track_losses());
+                        let chain_losses = is_chain_breaking.then_some(track_chain_losses());
+                        let break_losses = is_chain_breaking.then_some(track_break_losses());
                         let weapons = allowed_weapons();
                         let top_n = {
                             let raw = top_n_text().trim().to_string();
@@ -107,6 +117,9 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                                 Some(&d),
                                 Some(open),
                                 Some(is_active),
+                                losses,
+                                chain_losses,
+                                break_losses,
                                 Some(&weapons),
                                 top_n,
                             ).await {
@@ -183,6 +196,57 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                                 "Results are finalized; this side competition cannot be activated again."
                             } else {
                                 "When off, results cannot be entered."
+                            }
+                        }
+                    }
+                    if type_() == "CHAIN_BREAKING" {
+                        div { class: "mb-3 form-check form-switch",
+                            input {
+                                class: "form-check-input",
+                                r#type: "checkbox",
+                                id: "track-chain-losses-toggle",
+                                checked: track_chain_losses(),
+                                onchange: move |evt| track_chain_losses.set(evt.checked()),
+                            }
+                            label {
+                                class: "form-check-label",
+                                r#for: "track-chain-losses-toggle",
+                                "Track losses (chains)"
+                            }
+                        }
+                        div { class: "mb-3 form-check form-switch",
+                            input {
+                                class: "form-check-input",
+                                r#type: "checkbox",
+                                id: "track-break-losses-toggle",
+                                checked: track_break_losses(),
+                                onchange: move |evt| track_break_losses.set(evt.checked()),
+                            }
+                            label {
+                                class: "form-check-label",
+                                r#for: "track-break-losses-toggle",
+                                "Track losses (breakers)"
+                            }
+                            div { class: "form-text",
+                                "When off, only wins are entered and ranked for that group."
+                            }
+                        }
+                    } else {
+                        div { class: "mb-3 form-check form-switch",
+                            input {
+                                class: "form-check-input",
+                                r#type: "checkbox",
+                                id: "track-losses-toggle",
+                                checked: track_losses(),
+                                onchange: move |evt| track_losses.set(evt.checked()),
+                            }
+                            label {
+                                class: "form-check-label",
+                                r#for: "track-losses-toggle",
+                                "Track losses"
+                            }
+                            div { class: "form-text",
+                                "When on, standings rank by win percentage. When off, only wins are entered and ranked."
                             }
                         }
                     }

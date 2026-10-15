@@ -121,10 +121,17 @@ pub fn SideCompManageResults(url: String, comp_id: i32) -> Element {
                                                         format!("{}", row.points)
                                                     };
                                                     let weapon = row.weapon.clone().unwrap_or_default();
+                                                    let (row_style, row_title) = if row.untracked {
+                                                        ("opacity: 0.45; text-decoration: line-through;", "Losses are not tracked for this player")
+                                                    } else {
+                                                        ("", "")
+                                                    };
                                                     rsx! {
                                                         tr {
                                                             key: "{uuid}",
                                                             class: "{row_class}",
+                                                            style: "{row_style}",
+                                                            title: "{row_title}",
                                                             td { class: "text-nowrap small", "{stamp}" }
                                                             td { "{label}" }
                                                             td {
@@ -133,7 +140,7 @@ pub fn SideCompManageResults(url: String, comp_id: i32) -> Element {
                                                                 }
                                                             }
                                                             td {
-                                                                class: if row.points >= 0 { "fw-bold text-success" } else { "fw-bold text-danger" },
+                                                                class: if row.untracked { "fw-bold text-muted" } else if row.points >= 0 { "fw-bold text-success" } else { "fw-bold text-danger" },
                                                                 "{points_label}"
                                                             }
                                                             td { class: "small", "{row.result_ref}" }

@@ -3276,6 +3276,9 @@ pub async fn sidecomp_update(
     description: Option<&str>,
     registration_open: Option<bool>,
     active: Option<bool>,
+    track_losses: Option<bool>,
+    track_chain_losses: Option<bool>,
+    track_break_losses: Option<bool>,
     allowed_weapons: Option<&[String]>,
     only_show_top_n_results: Option<i32>,
 ) -> Result<Value, String> {
@@ -3295,6 +3298,15 @@ pub async fn sidecomp_update(
     }
     if let Some(is_active) = active {
         body.insert("active".to_string(), serde_json::json!(is_active));
+    }
+    if let Some(track) = track_losses {
+        body.insert("track_losses".to_string(), serde_json::json!(track));
+    }
+    if let Some(track) = track_chain_losses {
+        body.insert("track_chain_losses".to_string(), serde_json::json!(track));
+    }
+    if let Some(track) = track_break_losses {
+        body.insert("track_break_losses".to_string(), serde_json::json!(track));
     }
     if let Some(weapons) = allowed_weapons {
         body.insert("allowed_weapons".to_string(), serde_json::json!(weapons));
@@ -3471,6 +3483,15 @@ pub async fn sidecomp_flag_result(result_uuid: &str, flagged: bool) -> Result<Si
     .send()
     .await
     .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn sidecomp_delete_result(result_uuid: &str) -> Result<Value, String> {
+    let c = client();
+    let r = with_credentials(c.delete(format!("{}/_api/sidecomps/results/{}", base(), result_uuid)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 

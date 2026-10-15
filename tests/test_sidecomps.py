@@ -1451,7 +1451,14 @@ def test_log_result_and_standings(test_db, tournament):
 
     p = _make_player()
     _confirm_event_registration(tournament.url, p.id)
-    sc = SideComp(event=tournament.url, name="Duel", type="DUELING", registration_open=True, active=True)
+    sc = SideComp(
+        event=tournament.url,
+        name="Duel",
+        type="DUELING",
+        registration_open=True,
+        active=True,
+        track_losses=True,
+    )
     db.session.add(sc)
     db.session.commit()
 
@@ -1466,8 +1473,11 @@ def test_log_result_and_standings(test_db, tournament):
     standings = SideCompService.standings(sc.id).unwrap()
     assert standings["results_page_enabled"] is True
     assert len(standings["tables"]) == 1
+    assert standings["tables"][0]["track_losses"] is True
     row = standings["tables"][0]["rows"][0]
-    assert row["wins"] == 1
+    assert row["wins"] == 2
+    assert row["losses"] == 1
+    assert row["win_percentage"] == pytest.approx(200 / 3)
     assert row["rank"] == 1
     assert row["weapon"] == "LONG"
 
@@ -1486,6 +1496,34 @@ def test_log_result_rejects_when_inactive(test_db, tournament):
     res = SideCompService.log_result(sc.id, registration_id=reg.id, points=1, ref_user_id="ref")
     assert isinstance(res, Err)
     assert "not active" in str(res.unwrap_err()).lower()
+
+
+def test_delete_result_only_by_ref_while_active(test_db, tournament):
+    from app.error_values import Err
+    from app.services.sidecomp_service import SideCompService
+
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    sc = SideComp(event=tournament.url, name="Duel", type="DUELING", registration_open=True, active=True)
+    db.session.add(sc)
+    db.session.commit()
+
+    reg = SideCompService.register_player(sc.id, player_id=p.id, weapon="LONG").unwrap()
+    kept = SideCompService.log_result(sc.id, registration_id=reg.id, points=1, ref_user_id="ref").unwrap()
+    undone = SideCompService.log_result(sc.id, registration_id=reg.id, points=1, ref_user_id="ref").unwrap()
+    undone_uuid = undone.uuid
+
+    assert isinstance(SideCompService.delete_result(undone_uuid, actor_user_id="other_ref"), Err)
+
+    SideCompService.delete_result(undone_uuid, actor_user_id="ref").unwrap()
+    assert SideCompResult.query.get(undone_uuid) is None
+    assert SideCompService.standings(sc.id).unwrap()["tables"][0]["rows"][0]["wins"] == 1
+
+    sc.active = False
+    db.session.commit()
+    res = SideCompService.delete_result(kept.uuid, actor_user_id="ref")
+    assert isinstance(res, Err)
+    assert SideCompResult.query.get(kept.uuid) is not None
 
 
 def test_chain_breaking_standings_split_and_top_n(test_db, tournament):
@@ -1616,7 +1654,14 @@ def test_manage_results_lists_chronological_points(test_db, tournament):
     _make_to(tournament.url, to_user.id)
     p = _make_player()
     _confirm_event_registration(tournament.url, p.id)
-    sc = SideComp(event=tournament.url, name="Duel", type="DUELING", registration_open=True, active=True)
+    sc = SideComp(
+        event=tournament.url,
+        name="Duel",
+        type="DUELING",
+        registration_open=True,
+        active=True,
+        track_losses=True,
+    )
     db.session.add(sc)
     db.session.commit()
 
@@ -1632,3 +1677,92 @@ def test_manage_results_lists_chronological_points(test_db, tournament):
     assert payload["results"][1]["points"] == -1
     assert payload["results"][0]["entry_number"] == reg.entry_number
     assert payload["results"][0]["weapon"] == "LONG"
+    assert [r["untracked"] for r in payload["results"]] == [False, False]
+
+    sc.track_losses = False
+    db.session.commit()
+    payload = SideCompService.manage_results(sc.id, actor_user_id=to_user.id, actor_user_type="player").unwrap()
+    assert [r["untracked"] for r in payload["results"]] == [False, True]
+
+    row = SideCompService.standings(sc.id).unwrap()["tables"][0]["rows"][0]
+    assert row["wins"] == 1
+    assert row["losses"] is None
+    assert row["win_percentage"] is None
+
+
+def test_log_loss_rejected_per_chain_breaking_group(test_db, tournament):
+    from app.error_values import Err
+    from app.services.sidecomp_service import SideCompService
+
+    chain = _make_player("chain_p", "Chain")
+    staff = _make_player("staff_p", "Staff")
+    for pl in (chain, staff):
+        _confirm_event_registration(tournament.url, pl.id)
+    sc = SideComp(
+        event=tournament.url,
+        name="CB",
+        type="CHAIN_BREAKING",
+        registration_open=True,
+        active=True,
+        track_losses=True,
+        track_chain_losses=False,
+        track_break_losses=True,
+    )
+    db.session.add(sc)
+    db.session.commit()
+
+    r_chain = SideCompService.register_player(sc.id, player_id=chain.id, weapon="CHAIN").unwrap()
+    r_staff = SideCompService.register_player(sc.id, player_id=staff.id, weapon="STAFF").unwrap()
+
+    res = SideCompService.log_result(sc.id, registration_id=r_chain.id, points=-1, ref_user_id="ref")
+    assert isinstance(res, Err)
+    assert "not tracked" in str(res.unwrap_err()).lower()
+    SideCompService.log_result(sc.id, registration_id=r_staff.id, points=-1, ref_user_id="ref").unwrap()
+
+    roster = SideCompService.enter_results_roster(sc.id).unwrap()
+    track_by_reg = {p["registration_id"]: p["track_losses"] for p in roster["registrants"]}
+    assert track_by_reg == {r_chain.id: False, r_staff.id: True}
+
+    tables = {t["id"]: t["track_losses"] for t in SideCompService.standings(sc.id).unwrap()["tables"]}
+    assert tables == {"chains": False, "breaks": True}
+
+
+def test_standings_rank_by_win_percentage_when_tracking_losses(test_db, tournament):
+    from app.services.sidecomp_service import SideCompService
+
+    players = [_make_player(f"p_{name}", name) for name in ("Perfect", "Busy", "Idle", "Mid")]
+    for pl in players:
+        _confirm_event_registration(tournament.url, pl.id)
+    sc = SideComp(
+        event=tournament.url,
+        name="Duel",
+        type="DUELING",
+        registration_open=True,
+        active=True,
+        track_losses=True,
+    )
+    db.session.add(sc)
+    db.session.commit()
+
+    perfect, busy, idle, mid = (
+        SideCompService.register_player(sc.id, player_id=pl.id, weapon="LONG").unwrap() for pl in players
+    )
+
+    def log(reg, wins, losses):
+        for points in [1] * wins + [-1] * losses:
+            SideCompService.log_result(sc.id, registration_id=reg.id, points=points, ref_user_id="ref").unwrap()
+
+    log(perfect, 1, 0)
+    log(busy, 6, 2)
+    log(mid, 3, 1)
+
+    rows = SideCompService.standings(sc.id).unwrap()["tables"][0]["rows"]
+    assert [r["registration_id"] for r in rows] == [perfect.id, busy.id, mid.id, idle.id]
+    assert [r["rank"] for r in rows] == [1, 2, 3, 4]
+    assert rows[0]["win_percentage"] == pytest.approx(100.0)
+    assert rows[3]["win_percentage"] is None
+
+    sc.track_losses = False
+    db.session.commit()
+    rows = SideCompService.standings(sc.id).unwrap()["tables"][0]["rows"]
+    assert [r["registration_id"] for r in rows] == [busy.id, mid.id, perfect.id, idle.id]

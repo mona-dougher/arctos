@@ -1760,6 +1760,12 @@ pub struct SideCompDetail {
     #[serde(default)]
     pub finalized: bool,
     #[serde(default)]
+    pub track_losses: bool,
+    #[serde(default)]
+    pub track_chain_losses: bool,
+    #[serde(default)]
+    pub track_break_losses: bool,
+    #[serde(default)]
     pub allowed_weapons: Vec<String>,
     pub only_show_top_n_results: Option<i32>,
     #[serde(default)]
@@ -1822,6 +1828,8 @@ pub struct SideCompEnterRosterPlayer {
     pub team_id: Option<String>,
     pub team_shortname: Option<String>,
     pub team_profile_photo: Option<String>,
+    #[serde(default)]
+    pub track_losses: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1868,6 +1876,8 @@ pub struct SideCompStandingRow {
     pub team_shortname: Option<String>,
     pub team_profile_photo: Option<String>,
     pub wins: i32,
+    pub losses: Option<i32>,
+    pub win_percentage: Option<f64>,
     pub rank: i32,
 }
 
@@ -1875,6 +1885,8 @@ pub struct SideCompStandingRow {
 pub struct SideCompStandingTable {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub track_losses: bool,
     pub rows: Vec<SideCompStandingRow>,
 }
 
@@ -1914,6 +1926,8 @@ pub struct SideCompManageResultRow {
     pub jersey_name: Option<String>,
     pub jersey_number: Option<String>,
     pub team_shortname: Option<String>,
+    #[serde(default)]
+    pub untracked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
