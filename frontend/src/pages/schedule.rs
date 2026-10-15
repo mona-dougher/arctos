@@ -5197,12 +5197,32 @@ fn ScheduleTimeline(
         });
     }
 
-    // When filters change the day list, keep the cursor on a day that still has events.
+    // Prev/next target: the editor steps by calendar day so TOs can reach empty
+    // days; viewers jump between days that have events.
+    fn adjacent_date(
+        editor: bool,
+        dates: &[chrono::NaiveDate],
+        current: chrono::NaiveDate,
+        forward: bool,
+    ) -> Option<chrono::NaiveDate> {
+        if editor {
+            return if forward { current.succ_opt() } else { current.pred_opt() };
+        }
+        let idx = dates.iter().position(|&d| d == current)?;
+        if forward {
+            dates.get(idx + 1).copied()
+        } else {
+            dates.get(idx.checked_sub(1)?).copied()
+        }
+    }
+
+    // When filters change the day list, keep the cursor on a day that still has
+    // events. The editor may sit on empty days, so it never snaps.
     {
         let dates = dates_with_matches.clone();
         use_effect(move || {
             let current = visible_date_signal();
-            if !dates.is_empty() && !dates.contains(&current) {
+            if !editor && !dates.is_empty() && !dates.contains(&current) {
                 if dates.contains(&today_local) {
                     visible_date_signal.set(today_local);
                 } else if let Some(&first) = dates.first() {
@@ -5221,21 +5241,13 @@ fn ScheduleTimeline(
             let current = visible_date_signal();
             match c {
                 "next" => {
-                    if let Some(idx) = dates.iter().position(|&d| d == current) {
-                        if let Some(&next_date) = dates.get(idx + 1) {
-                            visible_date_signal.set(next_date);
-                        }
+                    if let Some(next_date) = adjacent_date(editor, &dates, current, true) {
+                        visible_date_signal.set(next_date);
                     }
                 }
                 "prev" => {
-                    if let Some(idx) = dates
-                        .iter()
-                        .position(|&d| d == current)
-                        .and_then(|i| i.checked_sub(1))
-                    {
-                        if let Some(&prev_date) = dates.get(idx) {
-                            visible_date_signal.set(prev_date);
-                        }
+                    if let Some(prev_date) = adjacent_date(editor, &dates, current, false) {
+                        visible_date_signal.set(prev_date);
                     }
                 }
                 "today" => {
@@ -6378,11 +6390,9 @@ fn ScheduleTimeline(
         div { class: "schedule-timeline-wrapper", id: "schedule-timeline-wrapper",
             div { class: "schedule-timeline-nav",
                 {
-                    let dates = dates_with_matches.clone();
                     let current = visible_date_signal();
-                    let current_idx = dates.iter().position(|&d| d == current);
-                    let has_prev = current_idx.and_then(|i| i.checked_sub(1)).and_then(|i| dates.get(i)).is_some();
-                    let has_next = current_idx.map(|i| i + 1 < dates.len()).unwrap_or(false);
+                    let has_prev = adjacent_date(editor, &dates_with_matches, current, false).is_some();
+                    let has_next = adjacent_date(editor, &dates_with_matches, current, true).is_some();
                     let dates_prev = dates_with_matches.clone();
                     let dates_today = dates_with_matches.clone();
                     let dates_next = dates_with_matches.clone();
@@ -6391,12 +6401,9 @@ fn ScheduleTimeline(
                             class: "btn btn-sm btn-outline-secondary",
                             disabled: !has_prev,
                             onclick: move |_| {
-                                let d = dates_prev.clone();
                                 let current = visible_date_signal();
-                                if let Some(idx) = d.iter().position(|&d2| d2 == current).and_then(|i| i.checked_sub(1)) {
-                                    if let Some(&prev_date) = d.get(idx) {
-                                        visible_date_signal.set(prev_date);
-                                    }
+                                if let Some(prev_date) = adjacent_date(editor, &dates_prev, current, false) {
+                                    visible_date_signal.set(prev_date);
                                 }
                             },
                             "← Prev"
@@ -6416,12 +6423,9 @@ fn ScheduleTimeline(
                             class: "btn btn-sm btn-outline-secondary",
                             disabled: !has_next,
                             onclick: move |_| {
-                                let d = dates_next.clone();
                                 let current = visible_date_signal();
-                                if let Some(idx) = d.iter().position(|&d2| d2 == current) {
-                                    if let Some(&next_date) = d.get(idx + 1) {
-                                        visible_date_signal.set(next_date);
-                                    }
+                                if let Some(next_date) = adjacent_date(editor, &dates_next, current, true) {
+                                    visible_date_signal.set(next_date);
                                 }
                             },
                             "Next →"

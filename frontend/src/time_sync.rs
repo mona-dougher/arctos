@@ -20,9 +20,9 @@
 
 use crate::stones_filter::{BayesianOffsetFilter, CONVERGED_VARIANCE_MS2};
 
-/// How many parallel probes to fire per measurement round; the lowest-RTT
+/// How many sequential probes to fire per measurement round; the lowest-RTT
 /// sample is kept (least queuing delay → least-biased one-way estimate).
-pub const PROBES_PER_ROUND: usize = 3;
+pub const PROBES_PER_ROUND: usize = 5;
 
 /// localStorage keys (namespaced, following the `record.rs` convention).
 pub const CLOCK_OFFSET_KEY: &str = "arctos_stones_clock_offset_ms";
@@ -343,27 +343,31 @@ pub fn use_time_sync() -> TimeSync {
     handle
 }
 
-/// Fire `PROBES_PER_ROUND` server-time requests in parallel and return the
-/// lowest-RTT sample (the one with the least queuing delay).
+/// Fire `PROBES_PER_ROUND` server-time requests one after another and return
+/// the lowest-RTT sample (the one with the least queuing delay).
 #[cfg(target_arch = "wasm32")]
 async fn probe_lowest_rtt() -> Option<Probe> {
-    let probes = (0..PROBES_PER_ROUND).map(|_| single_probe());
-    let samples: Vec<Probe> = futures::future::join_all(probes)
-        .await
-        .into_iter()
-        .flatten()
-        .collect();
+    let mut samples: Vec<Probe> = Vec::with_capacity(PROBES_PER_ROUND);
+    for _ in 0..PROBES_PER_ROUND {
+        if let Some(probe) = single_probe().await {
+            samples.push(probe);
+        }
+    }
     pick_lowest_rtt(&samples)
 }
 
+/// The round trip is timed on the monotonic `performance.now()` clock (immune to
+/// wall-clock steps, sub-ms resolution) and anchored to the wall clock at send.
 #[cfg(target_arch = "wasm32")]
 async fn single_probe() -> Option<Probe> {
+    let performance = web_sys::window()?.performance()?;
     let client_send_secs = raw_now_secs();
+    let send_monotonic_ms = performance.now();
     let res = crate::api::server_time().await.ok()?;
-    let client_receive_secs = raw_now_secs();
+    let elapsed_secs = (performance.now() - send_monotonic_ms) / 1000.0;
     Some(Probe {
         client_send_secs,
-        client_receive_secs,
+        client_receive_secs: client_send_secs + elapsed_secs,
         server_time_secs: res.server_time,
     })
 }
