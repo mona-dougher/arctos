@@ -1170,9 +1170,7 @@ class SideCompService:
                     "jersey_name": event_reg.jersey_name if event_reg else None,
                     "jersey_number": event_reg.jersey_number if event_reg else None,
                     "team_shortname": shortname,
-                    "untracked": result.points < 0
-                    and reg is not None
-                    and not sc.tracks_losses_for_weapon(reg.weapon),
+                    "untracked": result.points < 0 and reg is not None and not sc.tracks_losses_for_weapon(reg.weapon),
                 }
             )
 
