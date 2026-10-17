@@ -4,20 +4,6 @@ use crate::api;
 use crate::types::OAuthAuthorizationRequest;
 use dioxus::prelude::*;
 
-fn current_query() -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web_sys::window()
-            .and_then(|window| window.location().search().ok())
-            .map(|search| search.trim_start_matches('?').to_string())
-            .unwrap_or_default()
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        String::new()
-    }
-}
-
 fn query_param(query: &str, name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -56,15 +42,14 @@ fn navigate_away(url: &str) {
 
 #[component]
 pub fn OAuthAuthorize() -> Element {
-    let query = use_signal(current_query);
-    let navigator = use_navigator();
+    let query = use_signal(|| crate::initial_query("/oauth/authorize").unwrap_or_default());
     let mut error = use_signal(|| None::<String>);
     let mut deciding = use_signal(|| false);
 
     let request = use_resource(move || async move {
         if api::me().await.is_err() {
             let next = format!("/oauth/authorize?{}", query());
-            navigator.replace(format!("/login?next={}", urlencoding::encode(&next)));
+            navigate_away(&format!("/login?next={}", urlencoding::encode(&next)));
             return None;
         }
         Some(api::oauth_authorization_request(&query()).await)

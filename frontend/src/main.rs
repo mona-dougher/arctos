@@ -212,7 +212,25 @@ enum Route {
     OAuthAuthorize {},
 }
 
+/// The page's path and query string (without `?`) as it was loaded. The router
+/// rewrites the address bar to its own form of the route before any page
+/// renders, which drops query parameters the route doesn't declare and
+/// percent-decodes the ones it does.
+static INITIAL_LOCATION: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+
+/// The query string the app was loaded with, if it was loaded at `path`.
+pub fn initial_query(path: &str) -> Option<String> {
+    let (initial_path, query) = INITIAL_LOCATION.get()?;
+    (initial_path == path).then(|| query.clone())
+}
+
 fn main() {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(location) = web_sys::window().map(|window| window.location()) {
+        let path = location.pathname().unwrap_or_default();
+        let query = location.search().unwrap_or_default().trim_start_matches('?').to_string();
+        let _ = INITIAL_LOCATION.set((path, query));
+    }
     dioxus::launch(|| {
         rsx! {
             Router::<Route> {}

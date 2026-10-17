@@ -6,15 +6,25 @@ use dioxus::prelude::*;
 fn next_url_from_query() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let window = web_sys::window()?;
-        let search = window.location().search().ok()?;
-        let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
-        params.get("next").filter(|s| s.starts_with('/'))
+        let query = crate::initial_query("/login")?;
+        let params = web_sys::UrlSearchParams::new_with_str(&query).ok()?;
+        // `//host` and `/\host` leave the site.
+        params.get("next").filter(|next| next.starts_with('/') && !next.starts_with("//") && !next.starts_with("/\\"))
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         None
     }
+}
+
+/// A full page load, since navigating within the app would drop `next`'s query string.
+fn go_to_next(next: &str) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(window) = web_sys::window() {
+        let _ = window.location().assign(next);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = next;
 }
 
 #[component]
@@ -54,7 +64,12 @@ pub fn Login() -> Element {
                                     match api::login(&u, &p).await {
                                         Ok(_) => {
                                             auth_invalidate.set(auth_invalidate() + 1);
-                                            let _ = nav.push(next.as_deref().unwrap_or("/"));
+                                            match next.as_deref() {
+                                                Some(next) => go_to_next(next),
+                                                None => {
+                                                    let _ = nav.push("/");
+                                                }
+                                            }
                                         }
                                         Err(e) => err.set(Some(e)),
                                     }
