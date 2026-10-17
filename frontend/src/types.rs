@@ -1729,6 +1729,8 @@ pub struct SideCompSummary {
     pub created_at: Option<String>,
     #[serde(default)]
     pub viewer_is_registered: bool,
+    #[serde(default)]
+    pub viewer_registration_incomplete: bool,
     pub viewer_entry_number: Option<i32>,
     pub viewer_weapon: Option<String>,
 }
@@ -1778,6 +1780,8 @@ pub struct SideCompDetail {
     pub viewer_can_register: bool,
     #[serde(default)]
     pub viewer_is_registered_in_comp: bool,
+    #[serde(default)]
+    pub viewer_registration_incomplete: bool,
     pub viewer_entry_number: Option<i32>,
     pub viewer_weapon: Option<String>,
 }
@@ -1817,7 +1821,9 @@ pub struct SideCompRegisterPlayerResponse {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SideCompEnterRosterPlayer {
-    pub registration_id: i32,
+    pub registration_id: Option<i32>,
+    #[serde(default)]
+    pub registered: bool,
     pub entry_number: i32,
     pub weapon: Option<String>,
     pub player_id: String,
@@ -1920,6 +1926,8 @@ pub struct SideCompManageResultRow {
     pub valid: bool,
     pub entry_number: Option<i32>,
     pub weapon: Option<String>,
+    #[serde(default)]
+    pub registered: bool,
     pub player_id: Option<String>,
     #[serde(default)]
     pub display_name: String,

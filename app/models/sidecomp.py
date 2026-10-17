@@ -17,6 +17,8 @@ from app.models.constants import (
 )
 
 
+SCOPE_LEN = URL_SLUG_LEN + len("tournament:")
+
 _ALL_POMPFEN_NAMES = [p.name for p in Pompfen]
 _DEFAULT_ALLOWED_WEAPONS_JSON = json.dumps(_ALL_POMPFEN_NAMES)
 
@@ -106,9 +108,15 @@ class SideComp(db.Model):
         """Return whether the public results page should be shown."""
         return self.only_show_top_n_results is None or self.only_show_top_n_results != 0
 
-    def tracks_losses_for_weapon(self, weapon_value: int) -> bool:
-        """Return whether losses count for a registrant using *weapon_value*."""
+    def tracks_losses_for_weapon(self, weapon_value: int | None) -> bool:
+        """Return whether losses count for a registrant using *weapon_value*.
+
+        For chain/breaking, an unknown weapon (``None``) tracks losses when
+        either group does.
+        """
         if self.type == SideCompType.CHAIN_BREAKING:
+            if weapon_value is None:
+                return bool(self.track_chain_losses or self.track_break_losses)
             if weapon_value == Pompfen.CHAIN.value:
                 return bool(self.track_chain_losses)
             return bool(self.track_break_losses)
@@ -122,10 +130,12 @@ class SideCompRegistration(db.Model):
         id: Auto-increment primary key.
         comp: FK to the parent :class:`SideComp`.
         player: FK to the registering player.
-        entry_number: 1-indexed sequential entry number assigned at
-            registration time, unique within a comp. Numbers are not reused
-            after a deregistration.
-        weapon: Integer value of the selected :class:`Pompfen`.
+        entry_number: The player's :class:`SideCompEntryNumber` for the
+            comp's scope, shared by all of their registrations in that scope.
+        weapon: Integer value of the selected :class:`Pompfen`, or ``None``
+            for an incomplete registration (created when a result is logged
+            for a player who has not registered for this comp). Incomplete
+            registrations are hidden from registrant lists and standings.
         registered_at: Timestamp when the registration was created.
         registered_by_to: ``True`` when the row was created via TO registration,
             ``False`` for player self-registration.
@@ -137,7 +147,7 @@ class SideCompRegistration(db.Model):
     comp = db.Column(db.Integer, db.ForeignKey("sidecomps.id"), nullable=False)
     player = db.Column(db.String(USER_ID_LEN), db.ForeignKey("players.id"), nullable=False)
     entry_number = db.Column(db.Integer, nullable=False)
-    weapon = db.Column(db.Integer, nullable=False)
+    weapon = db.Column(db.Integer, nullable=True)
     registered_at = db.Column(
         db.DateTime,
         default=now_utc_naive,
@@ -150,6 +160,10 @@ class SideCompRegistration(db.Model):
         db.UniqueConstraint("comp", "entry_number", name="uq_sidecomp_registrations_comp_entry_number"),
     )
 
+    def is_complete(self) -> bool:
+        """Return whether the registrant has selected a weapon."""
+        return self.weapon is not None
+
     def get_weapon(self) -> Pompfen | None:
         """Return the selected :class:`Pompfen`, or ``None`` if invalid."""
         return Pompfen.from_value(self.weapon)
@@ -158,6 +172,44 @@ class SideCompRegistration(db.Model):
         """Return the selected pompfen name for JSON payloads."""
         w = self.get_weapon()
         return w.name if w is not None else None
+
+
+class SideCompEntryNumber(db.Model):
+    """A player's entry number, shared across every side competition in a scope.
+
+    The scope is the parent league when the tournament belongs to one, and
+    the tournament otherwise (see :meth:`scope_for_tournament`). Numbers are
+    assigned on first registration in the scope and never reassigned.
+
+    Attributes:
+        id: Auto-increment primary key.
+        scope: ``"league:<league url>"`` or ``"tournament:<tournament url>"``.
+        player: FK to the player holding the number.
+        number: 1-indexed entry number, unique within the scope.
+    """
+
+    __tablename__ = "sidecomp_entry_numbers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    scope = db.Column(db.String(SCOPE_LEN), nullable=False)
+    player = db.Column(
+        db.String(USER_ID_LEN),
+        db.ForeignKey("players.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    number = db.Column(db.Integer, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("scope", "player", name="uq_sidecomp_entry_numbers_scope_player"),
+        db.UniqueConstraint("scope", "number", name="uq_sidecomp_entry_numbers_scope_number"),
+    )
+
+    @staticmethod
+    def scope_for_tournament(tournament_url: str, league_id: str | None) -> str:
+        """Return the numbering scope for a tournament."""
+        if league_id:
+            return f"league:{league_id}"
+        return f"tournament:{tournament_url}"
 
 
 class SideCompResult(db.Model):

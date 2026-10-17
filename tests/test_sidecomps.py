@@ -665,9 +665,11 @@ def test_entry_numbers_do_not_reuse_after_deregister(test_db, tournament):
     assert r3.entry_number == 3
 
 
-def test_entry_numbers_independent_per_comp(test_db, tournament):
-    p = _make_player()
-    _confirm_event_registration(tournament.url, p.id)
+def test_entry_numbers_shared_across_comps_in_tournament(test_db, tournament):
+    p1 = _make_player("p1", "P1")
+    p2 = _make_player("p2", "P2")
+    _confirm_event_registration(tournament.url, p1.id)
+    _confirm_event_registration(tournament.url, p2.id)
     sc1 = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
     sc2 = SideComp(event=tournament.url, name="B", type="OTHER", registration_open=True)
     db.session.add_all([sc1, sc2])
@@ -675,10 +677,79 @@ def test_entry_numbers_independent_per_comp(test_db, tournament):
 
     from app.services.sidecomp_service import SideCompService
 
-    r1 = SideCompService.register_player(sc1.id, player_id=p.id, weapon="CHAIN").unwrap()
-    r2 = SideCompService.register_player(sc2.id, player_id=p.id, weapon="CHAIN").unwrap()
-    assert r1.entry_number == 1
-    assert r2.entry_number == 1
+    assert SideCompService.register_player(sc1.id, player_id=p1.id, weapon="CHAIN").unwrap().entry_number == 1
+    assert SideCompService.register_player(sc2.id, player_id=p2.id, weapon="CHAIN").unwrap().entry_number == 2
+    assert SideCompService.register_player(sc2.id, player_id=p1.id, weapon="CHAIN").unwrap().entry_number == 1
+    assert SideCompService.register_player(sc1.id, player_id=p2.id, weapon="CHAIN").unwrap().entry_number == 2
+
+
+def test_entry_numbers_shared_across_tournaments_in_league(test_db):
+    from datetime import datetime, timezone
+
+    from models import Tournament
+
+    ctx = _make_league_sidecomp_context(registration_open=True)
+    second_tournament = Tournament(
+        url="lg-evt-2",
+        name="League Event 2",
+        start_date=datetime.now(timezone.utc),
+        league_id=ctx["tournament"].league_id,
+    )
+    db.session.add(second_tournament)
+    db.session.flush()
+    other = _make_player("lg_p2", "LG P2")
+    db.session.add(
+        PlayerRegistration(
+            event=None,
+            league_id=second_tournament.league_id,
+            player=other.id,
+            jersey_number="8",
+            jersey_name="P2",
+            status=RegistrationStatus.CONFIRMED,
+            paid=True,
+        )
+    )
+    second_sc = SideComp(event=second_tournament.url, name="LG SC 2", type="DUELING", registration_open=True)
+    db.session.add(second_sc)
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    player = ctx["player"]
+    first_sc = ctx["sidecomp"]
+    assert SideCompService.register_player(first_sc.id, player_id=player.id, weapon="LONG").unwrap().entry_number == 1
+    assert SideCompService.register_player(second_sc.id, player_id=other.id, weapon="LONG").unwrap().entry_number == 2
+    assert SideCompService.register_player(second_sc.id, player_id=player.id, weapon="LONG").unwrap().entry_number == 1
+
+
+def test_entry_numbers_independent_across_standalone_tournaments(test_db, tournament):
+    from datetime import datetime, timezone
+
+    from models import Tournament
+    from tests.utils import make_registrable_config
+
+    other_tournament = Tournament(
+        url="other-evt",
+        name="Other",
+        registrable_config_id=make_registrable_config().id,
+        start_date=datetime.now(timezone.utc),
+    )
+    db.session.add(other_tournament)
+    db.session.commit()
+
+    p1 = _make_player("p1", "P1")
+    p2 = _make_player("p2", "P2")
+    _confirm_event_registration(tournament.url, p1.id)
+    _confirm_event_registration(other_tournament.url, p2.id)
+    sc1 = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
+    sc2 = SideComp(event=other_tournament.url, name="B", type="DUELING", registration_open=True)
+    db.session.add_all([sc1, sc2])
+    db.session.commit()
+
+    from app.services.sidecomp_service import SideCompService
+
+    assert SideCompService.register_player(sc1.id, player_id=p1.id, weapon="LONG").unwrap().entry_number == 1
+    assert SideCompService.register_player(sc2.id, player_id=p2.id, weapon="LONG").unwrap().entry_number == 1
 
 
 def test_register_player_as_to_assigns_entry_number(test_db, tournament):
@@ -1766,3 +1837,101 @@ def test_standings_rank_by_win_percentage_when_tracking_losses(test_db, tourname
     db.session.commit()
     rows = SideCompService.standings(sc.id).unwrap()["tables"][0]["rows"]
     assert [r["registration_id"] for r in rows] == [busy.id, mid.id, perfect.id, idle.id]
+
+
+def _make_two_comps_with_scoped_player(tournament):
+    """Return ``(registered_comp, other_comp, player, registration)`` where the
+    player holds a scoped entry number via ``registered_comp`` only."""
+    from app.services.sidecomp_service import SideCompService
+
+    p = _make_player()
+    _confirm_event_registration(tournament.url, p.id)
+    registered_comp = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
+    other_comp = SideComp(event=tournament.url, name="B", type="DUELING", active=True)
+    db.session.add_all([registered_comp, other_comp])
+    db.session.commit()
+    reg = SideCompService.register_player(registered_comp.id, player_id=p.id, weapon="LONG").unwrap()
+    return registered_comp, other_comp, p, reg
+
+
+def test_log_result_by_player_id_creates_incomplete_registration(test_db, tournament):
+    from app.services.sidecomp_service import SideCompService
+
+    _, other_comp, p, reg = _make_two_comps_with_scoped_player(tournament)
+
+    roster = SideCompService.enter_results_roster(other_comp.id).unwrap()["registrants"]
+    assert len(roster) == 1
+    assert roster[0]["player_id"] == p.id
+    assert roster[0]["registration_id"] is None
+    assert roster[0]["registered"] is False
+    assert roster[0]["entry_number"] == reg.entry_number
+    assert roster[0]["weapon"] is None
+
+    first = SideCompService.log_result(other_comp.id, player_id=p.id, points=1, ref_user_id="ref").unwrap()
+    second = SideCompService.log_result(other_comp.id, player_id=p.id, points=1, ref_user_id="ref").unwrap()
+    assert first.player == second.player
+
+    incomplete = SideCompRegistration.query.get(first.player)
+    assert incomplete.comp == other_comp.id
+    assert incomplete.weapon is None
+    assert incomplete.entry_number == reg.entry_number
+
+    roster_row = SideCompService.enter_results_roster(other_comp.id).unwrap()["registrants"][0]
+    assert roster_row["registration_id"] == incomplete.id
+    assert roster_row["registered"] is False
+
+
+def test_log_result_by_player_id_requires_scoped_entry_number(test_db, tournament):
+    from app.services.sidecomp_service import SideCompService
+
+    _, other_comp, _, _ = _make_two_comps_with_scoped_player(tournament)
+    stranger = _make_player("stranger", "Stranger")
+
+    res = SideCompService.log_result(other_comp.id, player_id=stranger.id, points=1, ref_user_id="ref")
+    assert isinstance(res, Err)
+    assert SideCompRegistration.query.filter_by(comp=other_comp.id).count() == 0
+
+
+def test_incomplete_registration_hidden_from_standings_and_registrants(app, client, tournament):
+    from app.services.sidecomp_service import SideCompService
+
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        _, other_comp, p, _ = _make_two_comps_with_scoped_player(tournament)
+        other_comp_id = other_comp.id
+        tournament_url = tournament.url
+        SideCompService.log_result(other_comp_id, player_id=p.id, points=1, ref_user_id="ref").unwrap()
+
+        assert SideCompService.standings(other_comp_id).unwrap()["tables"][0]["rows"] == []
+
+        manage = SideCompService.manage_results(
+            other_comp_id, actor_user_id=to_user.id, actor_user_type="player"
+        ).unwrap()
+        assert [(r["player_id"], r["registered"]) for r in manage["results"]] == [(p.id, False)]
+
+        login_as(client, p)
+
+    detail = client.get(f"/_api/sidecomps/{other_comp_id}").get_json()
+    assert detail["registrants"] == []
+    assert detail["viewer_registration_incomplete"] is True
+
+    summaries = client.get(f"/_api/{tournament_url}/sidecomps").get_json()
+    summary = next(s for s in summaries if s["id"] == other_comp_id)
+    assert summary["registrant_count"] == 0
+    assert summary["viewer_registration_incomplete"] is True
+
+
+def test_completing_registration_sets_weapon(test_db, tournament):
+    from app.services.sidecomp_service import SideCompService
+
+    _, other_comp, p, reg = _make_two_comps_with_scoped_player(tournament)
+    result = SideCompService.log_result(other_comp.id, player_id=p.id, points=1, ref_user_id="ref").unwrap()
+
+    completed = SideCompService.update_player_weapon(other_comp.id, player_id=p.id, weapon="STAFF").unwrap()
+    assert completed.id == result.player
+    assert completed.weapon_name() == "STAFF"
+    assert completed.entry_number == reg.entry_number
+
+    rows = SideCompService.standings(other_comp.id).unwrap()["tables"][0]["rows"]
+    assert [(r["player_id"], r["wins"]) for r in rows] == [(p.id, 1)]

@@ -3455,12 +3455,14 @@ pub async fn sidecomp_enter_results_roster(comp_id: i32) -> Result<SideCompEnter
 
 pub async fn sidecomp_log_result(
     comp_id: i32,
-    registration_id: i32,
+    registration_id: Option<i32>,
+    player_id: &str,
     points: i32,
 ) -> Result<SideCompResultEntry, String> {
     let c = client();
     let body = serde_json::json!({
         "registration_id": registration_id,
+        "player_id": player_id,
         "points": points,
     });
     let r = with_credentials(

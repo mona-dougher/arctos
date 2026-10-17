@@ -325,7 +325,12 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                                                                                 span { class: "badge bg-secondary", "Closed" }
                                                                             }
                                                                             span { class: "text-muted", "({row.registrant_count} registered)" }
-                                                                            if row.viewer_is_registered {
+                                                                            if row.viewer_registration_incomplete {
+                                                                                span { class: "badge bg-warning text-dark",
+                                                                                    i { class: "fas fa-exclamation-triangle me-1" }
+                                                                                    "Registration incomplete"
+                                                                                }
+                                                                            } else if row.viewer_is_registered {
                                                                                 span {
                                                                                     class: "badge bg-success",
                                                                                     if let Some(n) = row.viewer_entry_number {

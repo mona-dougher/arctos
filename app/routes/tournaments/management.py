@@ -28,6 +28,7 @@ from models import (
     Player,
     HeadRef,
     SideComp,
+    SideCompEntryNumber,
     SideCompRegistration,
     SideCompResult,
     PenaltyType,
@@ -289,6 +290,10 @@ def delete_tournament(tournament_url):
         )
 
     SideComp.query.filter_by(event=tournament_url).delete(synchronize_session=False)
+    if not tournament.league_id:
+        SideCompEntryNumber.query.filter_by(
+            scope=SideCompEntryNumber.scope_for_tournament(tournament_url, None)
+        ).delete(synchronize_session=False)
 
     from app.services.bracket_cleanup_service import cleanup_tournament_bracket_assets
 

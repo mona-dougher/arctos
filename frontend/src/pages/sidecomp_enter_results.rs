@@ -90,7 +90,7 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
     let mut query = use_signal(String::new);
     let mut history = use_signal(Vec::<HistoryEvent>::new);
     let mut error = use_signal(|| None::<String>);
-    let mut busy_reg = use_signal(|| None::<i32>);
+    let mut busy_player = use_signal(|| None::<String>);
     let mut undo_busy = use_signal(|| false);
 
     // Keep the newest history entry visible on the right; older entries overflow left.
@@ -154,6 +154,18 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                 padding: 0.55rem 0.45rem;
                 margin-bottom: 0.55rem;
                 box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+            }}
+            .sc-unregistered {{
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                color: #b26a00;
+                font-size: 1.3rem;
+                line-height: 1;
+            }}
+            .sc-unregistered-label {{
+                font-size: 0.5rem;
+                margin-top: 0.15rem;
             }}
             .sc-player-row.wins-only {{
                 grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem 3.2rem;
@@ -356,20 +368,20 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                             }
                             for p in matches.into_iter() {
                                 {
-                                    let reg_id = p.registration_id;
+                                    let player_key = p.player_id.clone();
                                     let p_plus = p.clone();
                                     let p_minus = p.clone();
                                     let pseudo = p.jersey_name.clone().unwrap_or_else(|| "—".to_string());
                                     let jersey_num = p.jersey_number.clone().unwrap_or_default();
                                     let shortname = p.team_shortname.clone().unwrap_or_else(|| "merc".to_string());
                                     let weapon = p.weapon.clone().unwrap_or_default();
-                                    let busy = busy_reg() == Some(reg_id);
+                                    let busy = busy_player().as_deref() == Some(player_key.as_str());
                                     let hist_short = shortname.clone();
                                     let hist_short_plus = shortname.clone();
                                     rsx! {
                                         div {
                                             class: if p.track_losses { "sc-player-row" } else { "sc-player-row wins-only" },
-                                            key: "{reg_id}",
+                                            key: "{player_key}",
                                             div { class: "sc-entry-num", "#{p.entry_number}" }
                                             if p.track_losses {
                                                 button {
@@ -378,10 +390,10 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                                                     onclick: move |_| {
                                                         let player = p_minus.clone();
                                                         let team_short = hist_short.clone();
-                                                        busy_reg.set(Some(player.registration_id));
+                                                        busy_player.set(Some(player.player_id.clone()));
                                                         error.set(None);
                                                         spawn(async move {
-                                                            match api::sidecomp_log_result(comp_id, player.registration_id, -1).await {
+                                                            match api::sidecomp_log_result(comp_id, player.registration_id, &player.player_id, -1).await {
                                                                 Ok(result) => {
                                                                     history.write().insert(0, HistoryEvent {
                                                                         result,
@@ -393,7 +405,7 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                                                                 }
                                                                 Err(e) => error.set(Some(e)),
                                                             }
-                                                            busy_reg.set(None);
+                                                            busy_player.set(None);
                                                         });
                                                     },
                                                     "+L"
@@ -426,7 +438,12 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                                                 }
                                             }
                                             div { class: "d-flex justify-content-center",
-                                                if !weapon.is_empty() {
+                                                if !p.registered {
+                                                    div { class: "sc-unregistered", title: "unregistered",
+                                                        i { class: "fas fa-exclamation-triangle" }
+                                                        div { class: "sc-unregistered-label", "unregistered" }
+                                                    }
+                                                } else if !weapon.is_empty() {
                                                     PompfenIcon { weapon: weapon, size: "1.7em".to_string() }
                                                 }
                                             }
@@ -436,10 +453,10 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                                                 onclick: move |_| {
                                                     let player = p_plus.clone();
                                                     let team_short = hist_short_plus.clone();
-                                                    busy_reg.set(Some(player.registration_id));
+                                                    busy_player.set(Some(player.player_id.clone()));
                                                     error.set(None);
                                                     spawn(async move {
-                                                        match api::sidecomp_log_result(comp_id, player.registration_id, 1).await {
+                                                        match api::sidecomp_log_result(comp_id, player.registration_id, &player.player_id, 1).await {
                                                             Ok(result) => {
                                                                 history.write().insert(0, HistoryEvent {
                                                                     result,
@@ -451,7 +468,7 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                                                             }
                                                             Err(e) => error.set(Some(e)),
                                                         }
-                                                        busy_reg.set(None);
+                                                        busy_player.set(None);
                                                     });
                                                 },
                                                 "+W"

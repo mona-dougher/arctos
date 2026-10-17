@@ -135,7 +135,13 @@ pub fn SideCompManageResults(url: String, comp_id: i32) -> Element {
                                                             td { class: "text-nowrap small", "{stamp}" }
                                                             td { "{label}" }
                                                             td {
-                                                                if !weapon.is_empty() {
+                                                                if !row.registered {
+                                                                    i {
+                                                                        class: "fas fa-exclamation-triangle text-warning",
+                                                                        style: "font-size: 1.2em;",
+                                                                        title: "unregistered",
+                                                                    }
+                                                                } else if !weapon.is_empty() {
                                                                     PompfenIcon { weapon: weapon, size: "1.4em".to_string() }
                                                                 }
                                                             }

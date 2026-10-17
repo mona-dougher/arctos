@@ -117,58 +117,80 @@ class SideCompService:
         return get_tournament_or_err(tournament_url)
 
     @staticmethod
-    def _next_entry_number(comp_id: int) -> int:
-        """Return the next 1-indexed ``entry_number`` for *comp_id*.
+    def _entry_number_scope(sc: "SideComp") -> str:
+        """Return the entry-number scope (league, else tournament) for *sc*."""
+        from models import SideCompEntryNumber, Tournament
 
-        Returns one more than the current max ``entry_number`` for the comp,
-        or ``1`` if the comp has no registrations. Numbers are not reused
-        when a registrant is removed.
-        """
+        tournament = Tournament.query.get(sc.event)
+        return SideCompEntryNumber.scope_for_tournament(sc.event, tournament.league_id if tournament else None)
+
+    @staticmethod
+    def _next_entry_number(scope: str) -> int:
+        """Return one more than the highest entry number assigned in *scope*, or ``1``."""
         from sqlalchemy import func
 
-        from models import SideCompRegistration, db
+        from models import SideCompEntryNumber, db
 
-        current_max = db.session.query(func.max(SideCompRegistration.entry_number)).filter_by(comp=comp_id).scalar()
+        current_max = db.session.query(func.max(SideCompEntryNumber.number)).filter_by(scope=scope).scalar()
         return (current_max or 0) + 1
 
     @staticmethod
-    def _insert_registration_with_entry_number(
-        *,
-        comp_id: int,
-        player_id: str,
-        weapon: "Pompfen",
-        registered_by_to: bool,
-    ) -> "SideCompRegistration":
-        """Insert a SideCompRegistration with a fresh entry_number.
+    def _entry_number_for_player(sc: "SideComp", player_id: str) -> int:
+        """Return *player_id*'s entry number in *sc*'s scope, assigning one if needed.
 
-        Retries once on IntegrityError to handle entry_number collision
-        under concurrent inserts (uq_sidecomp_registrations_comp_entry_number).
-        Caller is responsible for any pre-insert validation.
+        A new assignment is committed immediately. Retries once on
+        IntegrityError to handle a concurrent assignment of the same number
+        (uq_sidecomp_entry_numbers_scope_number) or to the same player.
         """
         from sqlalchemy.exc import IntegrityError
 
-        from models import SideCompRegistration, db
+        from models import SideCompEntryNumber, db
 
+        scope = SideCompService._entry_number_scope(sc)
         last_exc: Exception | None = None
         for _ in range(2):
-            entry_number = SideCompService._next_entry_number(comp_id)
-            reg = SideCompRegistration(
-                comp=comp_id,
+            existing = SideCompEntryNumber.query.filter_by(scope=scope, player=player_id).first()
+            if existing is not None:
+                return existing.number
+            assigned = SideCompEntryNumber(
+                scope=scope,
                 player=player_id,
-                entry_number=entry_number,
-                weapon=weapon.value,
-                registered_by_to=registered_by_to,
+                number=SideCompService._next_entry_number(scope),
             )
-            db.session.add(reg)
+            db.session.add(assigned)
             try:
                 db.session.commit()
-                return reg
+                return assigned.number
             except IntegrityError as exc:
                 db.session.rollback()
                 last_exc = exc
-                continue
         assert last_exc is not None
         raise last_exc
+
+    @staticmethod
+    def _add_registration(
+        sc: "SideComp",
+        *,
+        player_id: str,
+        weapon: Optional["Pompfen"],
+        registered_by_to: bool,
+    ) -> "SideCompRegistration":
+        """Add (without committing) a registration carrying the player's scoped entry number.
+
+        Pass ``weapon=None`` for an incomplete registration. Caller is
+        responsible for any pre-insert validation.
+        """
+        from models import SideCompRegistration, db
+
+        reg = SideCompRegistration(
+            comp=sc.id,
+            player=player_id,
+            entry_number=SideCompService._entry_number_for_player(sc, player_id),
+            weapon=weapon.value if weapon is not None else None,
+            registered_by_to=registered_by_to,
+        )
+        db.session.add(reg)
+        return reg
 
     @staticmethod
     def _require_to(tournament_url: str, actor_user_id: str, actor_user_type: str) -> Result[None, ArctosError]:
@@ -501,6 +523,7 @@ class SideCompService:
         from models import (
             SideComp,
             SideCompRegistration,
+            db,
         )
 
         sc = SideComp.query.get(comp_id)
@@ -515,7 +538,7 @@ class SideCompService:
             return Err(ValidationError("You must be registered for the event before joining a side competition"))
 
         existing = SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).first()
-        if existing:
+        if existing is not None and existing.is_complete():
             return Err(ValidationError("You are already registered for this side competition"))
 
         parsed_weapon = _parse_weapon(weapon)
@@ -523,12 +546,17 @@ class SideCompService:
             return Err(ValidationError("A valid weapon selection is required"))
         SideCompService._validate_weapon_for_comp(sc, parsed_weapon).Q()
 
-        reg = SideCompService._insert_registration_with_entry_number(
-            comp_id=comp_id,
-            player_id=player_id,
-            weapon=parsed_weapon,
-            registered_by_to=False,
-        )
+        if existing is not None:
+            existing.weapon = parsed_weapon.value
+            reg = existing
+        else:
+            reg = SideCompService._add_registration(
+                sc,
+                player_id=player_id,
+                weapon=parsed_weapon,
+                registered_by_to=False,
+            )
+        db.session.commit()
         return Ok(reg)
 
     @staticmethod
@@ -566,6 +594,7 @@ class SideCompService:
             Player,
             SideComp,
             SideCompRegistration,
+            db,
         )
 
         sc = SideComp.query.get(comp_id)
@@ -583,7 +612,7 @@ class SideCompService:
             return Err(ValidationError("Player is not registered for this event"))
 
         existing = SideCompRegistration.query.filter_by(comp=comp_id, player=player_id).first()
-        if existing:
+        if existing is not None and existing.is_complete():
             return Err(ValidationError("Player is already registered for this side competition"))
 
         parsed_weapon = _parse_weapon(weapon)
@@ -591,12 +620,17 @@ class SideCompService:
             return Err(ValidationError("A valid weapon selection is required"))
         SideCompService._validate_weapon_for_comp(sc, parsed_weapon).Q()
 
-        reg = SideCompService._insert_registration_with_entry_number(
-            comp_id=comp_id,
-            player_id=player_id,
-            weapon=parsed_weapon,
-            registered_by_to=True,
-        )
+        if existing is not None:
+            existing.weapon = parsed_weapon.value
+            reg = existing
+        else:
+            reg = SideCompService._add_registration(
+                sc,
+                player_id=player_id,
+                weapon=parsed_weapon,
+                registered_by_to=True,
+            )
+        db.session.commit()
         return Ok(reg)
 
     @staticmethod
@@ -797,13 +831,19 @@ class SideCompService:
 
     @staticmethod
     def enter_results_roster(comp_id: int) -> Result[dict, ArctosError]:
-        """Return the cached roster payload used by the enter-results UI."""
+        """Return the cached roster payload used by the enter-results UI.
+
+        Includes every registration in the comp (complete or incomplete) and
+        every player holding an entry number in the comp's scope without a
+        registration here (``registration_id`` is ``None``). Fully
+        registered players come first, then by entry number.
+        """
         from app.domain.enums import RegistrationStatus
         from app.services.registration_resolver import (
             player_registrations_for_tournament,
             team_registrations_for_tournament,
         )
-        from models import Player, SideComp, SideCompRegistration, Team, Tournament
+        from models import Player, SideComp, SideCompEntryNumber, SideCompRegistration, Team, Tournament
 
         sc = SideComp.query.get(comp_id)
         if sc is None:
@@ -813,22 +853,15 @@ class SideCompService:
         if tournament is None:
             return Err(NotFoundError("Tournament not found"))
 
-        regs = (
-            SideCompRegistration.query.filter_by(comp=comp_id).order_by(SideCompRegistration.entry_number.asc()).all()
-        )
-        if not regs:
-            return Ok(
-                {
-                    "id": sc.id,
-                    "name": sc.name,
-                    "type": str(sc.type),
-                    "active": bool(sc.active),
-                    "registrants": [],
-                }
-            )
+        regs_by_player = {r.player: r for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
+        numbers_by_player = {
+            n.player: n.number
+            for n in SideCompEntryNumber.query.filter_by(scope=SideCompService._entry_number_scope(sc)).all()
+        }
+        numbers_by_player.update({player_id: reg.entry_number for player_id, reg in regs_by_player.items()})
 
-        player_ids = [r.player for r in regs]
-        players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()}
+        player_ids = list(numbers_by_player)
+        players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
 
         event_regs = {
             er.player: er
@@ -846,9 +879,10 @@ class SideCompService:
                     team_pseudonyms[tr.team] = tr.pseudonym
 
         registrants = []
-        for reg in regs:
-            player = players_by_id.get(reg.player)
-            event_reg = event_regs.get(reg.player)
+        for player_id, entry_number in numbers_by_player.items():
+            reg = regs_by_player.get(player_id)
+            player = players_by_id.get(player_id)
+            event_reg = event_regs.get(player_id)
             team_id = event_reg.team if event_reg else None
             team = teams_by_id.get(team_id) if team_id else None
             display_team_name = None
@@ -861,20 +895,22 @@ class SideCompService:
             )
             registrants.append(
                 {
-                    "registration_id": reg.id,
-                    "entry_number": reg.entry_number,
-                    "weapon": reg.weapon_name(),
-                    "player_id": reg.player,
-                    "display_name": player.name if player else reg.player,
+                    "registration_id": reg.id if reg else None,
+                    "registered": reg is not None and reg.is_complete(),
+                    "entry_number": entry_number,
+                    "weapon": reg.weapon_name() if reg else None,
+                    "player_id": player_id,
+                    "display_name": player.name if player else player_id,
                     "profile_photo": player.profile_photo if player else None,
                     "jersey_name": event_reg.jersey_name if event_reg else None,
                     "jersey_number": event_reg.jersey_number if event_reg else None,
                     "team_id": team_id,
                     "team_shortname": shortname,
                     "team_profile_photo": team.profile_photo if team else None,
-                    "track_losses": sc.tracks_losses_for_weapon(reg.weapon),
+                    "track_losses": sc.tracks_losses_for_weapon(reg.weapon if reg else None),
                 }
             )
+        registrants.sort(key=lambda r: (not r["registered"], r["entry_number"]))
 
         return Ok(
             {
@@ -891,12 +927,19 @@ class SideCompService:
     def log_result(
         comp_id: int,
         *,
-        registration_id: int,
+        registration_id: Optional[int] = None,
+        player_id: Optional[str] = None,
         points: int,
         ref_user_id: str,
     ) -> Result["SideCompResult", ArctosError]:
-        """Persist a ``+1`` / ``-1`` point for *registration_id*."""
-        from models import SideComp, SideCompRegistration, SideCompResult, db
+        """Persist a ``+1`` / ``-1`` point for a registrant.
+
+        Identify the registrant by *registration_id*, or by *player_id* for a
+        player holding an entry number in the comp's scope. A *player_id*
+        without a registration in this comp gets an incomplete one (no
+        weapon) created alongside the result.
+        """
+        from models import SideComp, SideCompEntryNumber, SideCompRegistration, SideCompResult, db
 
         if points not in (1, -1):
             return Err(ValidationError("points must be +1 or -1"))
@@ -911,12 +954,28 @@ class SideCompService:
         if not sc.active:
             return Err(ValidationError("This side competition is not active; results cannot be entered"))
 
-        reg = SideCompRegistration.query.filter_by(id=registration_id, comp=comp_id).first()
-        if reg is None:
-            return Err(NotFoundError("Registration not found"))
+        if registration_id is not None:
+            reg = SideCompRegistration.query.filter_by(id=registration_id, comp=comp_id).first()
+            if reg is None:
+                return Err(NotFoundError("Registration not found"))
+        elif player_id is not None:
+            reg = SideCompRegistration.query.filter_by(player=player_id, comp=comp_id).first()
+            if reg is None:
+                holds_number = SideCompEntryNumber.query.filter_by(
+                    scope=SideCompService._entry_number_scope(sc), player=player_id
+                ).first()
+                if holds_number is None:
+                    return Err(NotFoundError("Player has no side competition entry number here"))
+        else:
+            return Err(ValidationError("registration_id or player_id is required"))
 
-        if points < 0 and not sc.tracks_losses_for_weapon(reg.weapon):
+        weapon_value = reg.weapon if reg is not None else None
+        if points < 0 and not sc.tracks_losses_for_weapon(weapon_value):
             return Err(ValidationError("Losses are not tracked for this player"))
+
+        if reg is None:
+            reg = SideCompService._add_registration(sc, player_id=player_id, weapon=None, registered_by_to=False)
+            db.session.flush()
 
         result = SideCompResult(
             comp=comp_id,
@@ -1105,6 +1164,7 @@ class SideCompService:
                     **result.to_payload(),
                     "entry_number": reg.entry_number if reg else None,
                     "weapon": reg.weapon_name() if reg else None,
+                    "registered": reg is not None and reg.is_complete(),
                     "player_id": player_id,
                     "display_name": player.name if player else (player_id or ""),
                     "jersey_name": event_reg.jersey_name if event_reg else None,
@@ -1133,7 +1193,7 @@ class SideCompService:
 
         Rankings are computed per table over all valid points, then an optional
         top-N cut is applied. Weapon filtering is left to the client so ranks
-        remain global within each table.
+        remain global within each table. Incomplete registrations are excluded.
         """
         from sqlalchemy import case, func
 
@@ -1149,7 +1209,10 @@ class SideCompService:
             return Err(NotFoundError("Side competition not found"))
 
         tournament = Tournament.query.get(sc.event)
-        regs = SideCompRegistration.query.filter_by(comp=comp_id).all()
+        regs = SideCompRegistration.query.filter(
+            SideCompRegistration.comp == comp_id,
+            SideCompRegistration.weapon.isnot(None),
+        ).all()
 
         score_rows = (
             db.session.query(

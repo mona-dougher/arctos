@@ -30,10 +30,12 @@ def _sc_summary(sc, *, registrant_count=None, viewer_reg=None):
         payload["registrant_count"] = registrant_count
     if viewer_reg is not None:
         payload["viewer_is_registered"] = True
+        payload["viewer_registration_incomplete"] = not viewer_reg.is_complete()
         payload["viewer_entry_number"] = viewer_reg.entry_number
         payload["viewer_weapon"] = viewer_reg.weapon_name()
     else:
         payload["viewer_is_registered"] = False
+        payload["viewer_registration_incomplete"] = False
         payload["viewer_entry_number"] = None
         payload["viewer_weapon"] = None
     return payload
@@ -71,7 +73,10 @@ def list_for_event(tournament_url: str):
 
     rows = (
         db.session.query(SideComp, func.count(SideCompRegistration.id))
-        .outerjoin(SideCompRegistration, SideCompRegistration.comp == SideComp.id)
+        .outerjoin(
+            SideCompRegistration,
+            (SideCompRegistration.comp == SideComp.id) & SideCompRegistration.weapon.isnot(None),
+        )
         .filter(SideComp.event == tournament_url)
         .group_by(SideComp.id)
         .order_by(SideComp.created_at.asc())
@@ -96,6 +101,7 @@ def _detail_payload(sc, registrants):
     viewer_is_to = False
     viewer_can_register = False
     viewer_is_registered_in_comp = False
+    viewer_registration_incomplete = False
     viewer_entry_number = None
     viewer_weapon = None
     if current_user.is_authenticated:
@@ -104,6 +110,7 @@ def _detail_payload(sc, registrants):
             for reg, _ in registrants:
                 if reg.player == current_user.id:
                     viewer_is_registered_in_comp = True
+                    viewer_registration_incomplete = not reg.is_complete()
                     viewer_entry_number = reg.entry_number
                     viewer_weapon = reg.weapon_name()
                     break
@@ -123,10 +130,12 @@ def _detail_payload(sc, registrants):
                 "registered_by_to": bool(reg.registered_by_to),
             }
             for reg, player in registrants
+            if reg.is_complete()
         ],
         "viewer_is_to": viewer_is_to,
         "viewer_can_register": viewer_can_register,
         "viewer_is_registered_in_comp": viewer_is_registered_in_comp,
+        "viewer_registration_incomplete": viewer_registration_incomplete,
         "viewer_entry_number": viewer_entry_number,
         "viewer_weapon": viewer_weapon,
     }
@@ -393,7 +402,13 @@ def eligible_players(comp_id: int):
 
     tournament = Tournament.query.get(sc.event)
 
-    sidecomp_regs = {r.player: r for r in SideCompRegistration.query.filter_by(comp=comp_id).all()}
+    sidecomp_regs = {
+        r.player: r
+        for r in SideCompRegistration.query.filter(
+            SideCompRegistration.comp == comp_id,
+            SideCompRegistration.weapon.isnot(None),
+        ).all()
+    }
 
     event_regs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
 
@@ -439,12 +454,15 @@ def enter_results_roster(comp_id: int):
 @login_required
 @require_json_body()
 def log_result(comp_id: int):
-    """Authenticated: log a +1 / -1 point against a registration."""
+    """Authenticated: log a +1 / -1 point against a registration_id or player_id."""
     data = g.json_body
-    try:
-        registration_id = int(data.get("registration_id"))
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "error": "registration_id is required"}), 400
+    registration_id = None
+    if data.get("registration_id") is not None:
+        try:
+            registration_id = int(data.get("registration_id"))
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "registration_id must be an integer"}), 400
+    player_id = (data.get("player_id") or "").strip() or None
     try:
         points = int(data.get("points"))
     except (TypeError, ValueError):
@@ -453,6 +471,7 @@ def log_result(comp_id: int):
     res = SideCompService.log_result(
         comp_id,
         registration_id=registration_id,
+        player_id=player_id,
         points=points,
         ref_user_id=current_user.id,
     )

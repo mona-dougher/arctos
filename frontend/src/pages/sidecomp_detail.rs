@@ -33,6 +33,7 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                         let viewer_is_to = d.viewer_is_to;
                         let viewer_can_register = d.viewer_can_register;
                         let viewer_is_registered_in_comp = d.viewer_is_registered_in_comp;
+                        let viewer_registration_incomplete = d.viewer_registration_incomplete;
                         let registration_open = d.registration_open;
                         let active = d.active;
                         let finalized = d.finalized;
@@ -86,7 +87,14 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                                         "Register me"
                                     }
                                 }
-                                if viewer_is_registered_in_comp {
+                                if viewer_registration_incomplete {
+                                    button {
+                                        class: "btn btn-warning",
+                                        onclick: move |_| show_edit_modal.set(true),
+                                        i { class: "fas fa-exclamation-triangle me-1" }
+                                        "Complete registration"
+                                    }
+                                } else if viewer_is_registered_in_comp {
                                     button {
                                         class: "btn btn-outline-secondary",
                                         onclick: move |_| show_edit_modal.set(true),
@@ -166,10 +174,10 @@ pub fn SideCompDetail(url: String, comp_id: i32) -> Element {
                             if show_edit_modal() {
                                 SideCompWeaponModal {
                                     title: format!("{comp_name} registration"),
-                                    mode: SideCompRegistrationMode::Edit,
+                                    mode: if viewer_registration_incomplete { SideCompRegistrationMode::Register } else { SideCompRegistrationMode::Edit },
                                     allowed_weapons: allowed_weapons.clone(),
                                     initial_weapon: viewer_weapon.clone(),
-                                    show_deregister: true,
+                                    show_deregister: !viewer_registration_incomplete,
                                     on_close: move |_| show_edit_modal.set(false),
                                     on_submit: move |weapon: String| {
                                         let mut err = action_error;

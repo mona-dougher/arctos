@@ -20,7 +20,7 @@ from app.models.match import Match, Point, MatchNote
 from app.models.bracket import BracketImage, BracketLabeledTeam, BracketPlacement, BracketText
 from app.models.penalty_type import PenaltyType
 from app.models.records import Injury, HeadRef
-from app.models.sidecomp import SideComp, SideCompRegistration, SideCompResult
+from app.models.sidecomp import SideComp, SideCompEntryNumber, SideCompRegistration, SideCompResult
 from app.models.camera import Camera
 from app.models.normalised import (
     CameraTimepoint,
@@ -55,6 +55,7 @@ __all__ = [
     "Injury",
     "HeadRef",
     "SideComp",
+    "SideCompEntryNumber",
     "SideCompRegistration",
     "SideCompResult",
     # Normalised join tables (added by the additive schema migration).
