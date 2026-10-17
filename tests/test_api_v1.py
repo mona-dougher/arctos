@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 import pytest
 
-from app.domain.enums import MatchStatus, ScheduleType, SetType
+from app.domain.enums import MatchStatus, Pompfen, ScheduleType, SetType
 from models import (
     TO,
     Field,
@@ -20,6 +20,7 @@ from models import (
     Point,
     SideComp,
     SideCompRegistration,
+    SideCompResult,
     Team,
     TeamRegistration,
     Tournament,
@@ -113,10 +114,19 @@ def world(test_db, tournament, team, team_registration, player):
     db.session.add(Injury(player=player.id, message="Sprained ankle", show=True, stamp=BASE))
     db.session.add(Injury(player=player.id, message="Private concussion", show=False, stamp=BASE))
 
-    side_competition = SideComp(event=tournament.url, name="Duels", type="DUELING")
+    side_competition = SideComp(event=tournament.url, name="Duels", type="DUELING", track_losses=True)
     db.session.add(side_competition)
     db.session.flush()
-    db.session.add(SideCompRegistration(comp=side_competition.id, player=player.id, entry_number=1))
+    duelist = SideCompRegistration(
+        comp=side_competition.id, player=player.id, entry_number=1, weapon=Pompfen.LONG.value
+    )
+    # Logging a result for an unregistered player leaves an incomplete registration.
+    unregistered = SideCompRegistration(comp=side_competition.id, player=organizer.id, entry_number=2)
+    db.session.add_all([duelist, unregistered])
+    db.session.flush()
+    for points in (1, 1, -1):
+        db.session.add(SideCompResult(comp=side_competition.id, player=duelist.id, points=points, ref=organizer.id))
+    db.session.add(SideCompResult(comp=side_competition.id, player=unregistered.id, points=1, ref=organizer.id))
     db.session.commit()
     return {
         "tournament": tournament,
@@ -127,6 +137,7 @@ def world(test_db, tournament, team, team_registration, player):
         "live": live,
         "finished": finished,
         "upcoming": upcoming,
+        "side_competition": side_competition,
     }
 
 
@@ -480,7 +491,57 @@ def test_side_competitions(client, world, token):
     ).get_json()["side_competitions"]
     assert side_competition["name"] == "Duels"
     assert side_competition["type"] == "DUELING"
-    assert side_competition["registrants"][0]["player"] == {"id": "test_player", "name": "Test Player"}
+    assert side_competition["registrant_count"] == 1
+    assert side_competition["track_losses"] is True
+    assert side_competition["results_available"] is True
+    assert "registrants" not in side_competition
+
+
+def test_side_competition_detail_hides_incomplete_registrations(client, world, token):
+    side_competition_id = world["side_competition"].id
+    detail = client.get(
+        f"/api/v1/tournaments/test-tournament/side-competitions/{side_competition_id}", headers=_bearer(token)
+    ).get_json()
+    assert detail["registrant_count"] == 1
+    [registrant] = detail["registrants"]
+    assert registrant["player"] == {"id": "test_player", "name": "Test Player"}
+    assert (registrant["entry_number"], registrant["weapon"]) == (1, "LONG")
+
+
+def test_side_competition_results(client, world, token):
+    side_competition_id = world["side_competition"].id
+    results = client.get(
+        f"/api/v1/tournaments/test-tournament/side-competitions/{side_competition_id}/results",
+        headers=_bearer(token),
+    ).get_json()
+    assert results["finalized"] is False
+    [table] = results["tables"]
+    assert (table["id"], table["track_losses"]) == ("all", True)
+    [row] = table["rows"]
+    assert row["player"] == {"id": "test_player", "name": "Test Player"}
+    assert row["team"]["id"] == world["team"].id
+    assert (row["rank"], row["wins"], row["losses"]) == (1, 2, 1)
+    assert row["win_percentage"] == pytest.approx(200 / 3)
+
+
+def test_hidden_side_competition_results_are_not_found(client, world, token):
+    world["side_competition"].only_show_top_n_results = 0
+    db.session.commit()
+    response = client.get(
+        f"/api/v1/tournaments/test-tournament/side-competitions/{world['side_competition'].id}/results",
+        headers=_bearer(token),
+    )
+    assert response.status_code == 404
+
+
+def test_side_competitions_of_other_tournaments_are_not_found(client, world, token):
+    side_competition_id = world["side_competition"].id
+    for path in ("", "/results"):
+        response = client.get(
+            f"/api/v1/tournaments/secret-cup/side-competitions/{side_competition_id}{path}",
+            headers=_bearer(issue_access_token(world["organizer"], scope="footage")),
+        )
+        assert response.status_code == 404
 
 
 def test_unknown_api_paths_return_json_errors(client, world, token):

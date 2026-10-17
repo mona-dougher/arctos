@@ -525,6 +525,8 @@ Standings from completed matches, by team name. Add
 
 #### `GET /tournaments/{tournament_id}/side-competitions`
 
+Side competitions (duels, chains and breaks, and the like), oldest first.
+
 ```json
 {
   "side_competitions": [
@@ -534,12 +536,82 @@ Standings from completed matches, by team name. Add
       "type": "DUELING",
       "description": "Single elimination.",
       "registration_open": false,
-      "created_at": "2026-04-20T10:00:00Z",
-      "registrants": [
+      "active": true,
+      "finalized": false,
+      "allowed_weapons": ["LONG", "QTIP", "STAFF"],
+      "track_losses": true,
+      "track_chain_losses": false,
+      "track_break_losses": false,
+      "results_available": true,
+      "registrant_count": 12,
+      "created_at": "2026-04-20T10:00:00Z"
+    }
+  ]
+}
+```
+
+- `type` is `DUELING`, `CHAIN_BREAKING`, or `OTHER`.
+- `active` means results are being logged right now. `finalized` means the
+  organizers have locked the results as final; until then they are
+  unofficial.
+- `allowed_weapons` are the weapons players may register with: `CHAIN`,
+  `LONG`, `QTIP`, `STAFF`, `BOARD`, `FLORENTINE`, `SKULL`, or `UNARMED`.
+- Whether losses count is `track_losses`, except in `CHAIN_BREAKING`, where
+  chains follow `track_chain_losses` and everyone else follows
+  `track_break_losses`.
+- `results_available` is `false` when the organizers have hidden the
+  results.
+
+#### `GET /tournaments/{tournament_id}/side-competitions/{side_competition_id}`
+
+One side competition, with the fields above plus its registrants in
+registration order.
+
+```json
+{
+  "id": 3,
+  "name": "Duels",
+  "...": "...",
+  "registrants": [
+    {
+      "entry_number": 1,
+      "player": {"id": "jsmith", "name": "Jane Smith"},
+      "weapon": "LONG",
+      "registered_at": "2026-04-21T09:12:00Z"
+    }
+  ]
+}
+```
+
+A player keeps the same `entry_number` in every side competition of the
+tournament, or of the league when the tournament belongs to one.
+
+#### `GET /tournaments/{tournament_id}/side-competitions/{side_competition_id}/results`
+
+Standings. `CHAIN_BREAKING` has two tables, `chains` and `breaks`; every
+other type has one, `all`. Rows are ranked by wins, or by win percentage
+when the table tracks losses. When the organizers show only the top
+players, each table has only those rows. `404` when the organizers have
+hidden the results.
+
+```json
+{
+  "finalized": false,
+  "tables": [
+    {
+      "id": "all",
+      "title": "Standings",
+      "track_losses": true,
+      "rows": [
         {
+          "rank": 1,
           "entry_number": 1,
+          "weapon": "LONG",
           "player": {"id": "jsmith", "name": "Jane Smith"},
-          "registered_at": "2026-04-21T09:12:00Z"
+          "team": {"id": "jsmith-team", "name": "Smith & Co", "shortname": "SMC"},
+          "wins": 9,
+          "losses": 3,
+          "win_percentage": 75.0
         }
       ]
     }
@@ -547,7 +619,9 @@ Standings from completed matches, by team name. Add
 }
 ```
 
-`type` is `DUELING`, `CHAIN_BREAKING`, or `OTHER`.
+`team` is the player's team at the tournament, or `null`. `losses` and
+`win_percentage` are `null` when the table doesn't track losses, and
+`win_percentage` is also `null` before a player's first result.
 
 ### Footage
 

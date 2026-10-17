@@ -320,6 +320,28 @@ class SideCompService:
         return SideComp.query.filter_by(event=tournament_url).order_by(SideComp.created_at.asc()).all()
 
     @staticmethod
+    def list_with_registrant_counts(tournament_url: str) -> list[tuple]:
+        """Return ``(SideComp, registrant count)`` for *tournament_url*, oldest first.
+
+        Incomplete registrations are not counted.
+        """
+        from sqlalchemy import func
+
+        from models import SideComp, SideCompRegistration, db
+
+        return (
+            db.session.query(SideComp, func.count(SideCompRegistration.id))
+            .outerjoin(
+                SideCompRegistration,
+                (SideCompRegistration.comp == SideComp.id) & SideCompRegistration.weapon.isnot(None),
+            )
+            .filter(SideComp.event == tournament_url)
+            .group_by(SideComp.id)
+            .order_by(SideComp.created_at.asc())
+            .all()
+        )
+
+    @staticmethod
     def get_with_registrants(comp_id: int) -> Result[tuple, ArctosError]:
         """Return a side competition and its registrants by *comp_id*.
 
@@ -1271,6 +1293,7 @@ class SideCompService:
                 "profile_photo": player.profile_photo if player else None,
                 "jersey_name": event_reg.jersey_name if event_reg else None,
                 "jersey_number": event_reg.jersey_number if event_reg else None,
+                "team_id": team_id,
                 "team_shortname": shortname,
                 "team_profile_photo": teams_by_id[team_id].profile_photo
                 if team_id and team_id in teams_by_id

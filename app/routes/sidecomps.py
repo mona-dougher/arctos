@@ -68,20 +68,9 @@ def list_for_event(tournament_url: str):
     Returns a JSON array of summaries including viewer registration context
     when the current user is a registered player.
     """
-    from sqlalchemy import func
-    from models import SideComp, SideCompRegistration, db
+    from models import SideCompRegistration
 
-    rows = (
-        db.session.query(SideComp, func.count(SideCompRegistration.id))
-        .outerjoin(
-            SideCompRegistration,
-            (SideCompRegistration.comp == SideComp.id) & SideCompRegistration.weapon.isnot(None),
-        )
-        .filter(SideComp.event == tournament_url)
-        .group_by(SideComp.id)
-        .order_by(SideComp.created_at.asc())
-        .all()
-    )
+    rows = SideCompService.list_with_registrant_counts(tournament_url)
 
     viewer_regs_by_comp = {}
     if current_user.is_authenticated and is_player(current_user):

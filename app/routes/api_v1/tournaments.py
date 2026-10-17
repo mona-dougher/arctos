@@ -8,10 +8,13 @@ from sqlalchemy import func, or_
 from app.domain.enums import MatchStatus
 from app.error_values import Ok
 from app.serializers.api_v1_serializer import (
+    TeamNames,
     scope_of,
     scope_players_json,
     scope_teams_json,
+    side_competition_detail_json,
     side_competition_json,
+    side_competition_results_json,
     standings_json,
     tournament_json,
 )
@@ -22,9 +25,9 @@ from app.services.sidecomp_service import SideCompService
 from app.services.team_stats_service import compute_team_stats
 from app.utils.datetime_helpers import now_utc_naive
 from app.utils.oauth_server import require_bearer
-from models import Field, Match, Tournament
+from models import Field, Match, SideComp, Tournament
 
-from . import bp, error, flag_argument, sees_unpublished_organized, with_tournament
+from . import bp, error, flag_argument, result_response, sees_unpublished_organized, with_tournament
 
 
 @bp.get("/tournaments")
@@ -103,9 +106,36 @@ def tournament_results(tournament):
 @require_bearer()
 @with_tournament
 def list_side_competitions(tournament):
-    side_competitions = []
-    for side_competition in SideCompService.list_for_event(tournament.url):
-        match SideCompService.get_with_registrants(side_competition.id):
-            case Ok((loaded, registrants)):
-                side_competitions.append(side_competition_json(loaded, registrants))
-    return jsonify({"side_competitions": side_competitions})
+    return jsonify(
+        {
+            "side_competitions": [
+                side_competition_json(side_competition, registrant_count)
+                for side_competition, registrant_count in SideCompService.list_with_registrant_counts(tournament.url)
+            ]
+        }
+    )
+
+
+@bp.get("/tournaments/<tournament_id>/side-competitions/<int:side_competition_id>")
+@require_bearer()
+@with_tournament
+def get_side_competition(tournament, side_competition_id):
+    match SideCompService.get_with_registrants(side_competition_id):
+        case Ok((side_competition, registrants)) if side_competition.event == tournament.url:
+            return jsonify(side_competition_detail_json(side_competition, registrants))
+    return error("Side competition not found", 404)
+
+
+@bp.get("/tournaments/<tournament_id>/side-competitions/<int:side_competition_id>/results")
+@require_bearer()
+@with_tournament
+def side_competition_results(tournament, side_competition_id):
+    side_competition = SideComp.query.get(side_competition_id)
+    if side_competition is None or side_competition.event != tournament.url:
+        return error("Side competition not found", 404)
+    if not side_competition.results_page_enabled():
+        return error("The organizers have hidden this side competition's results", 404)
+    return result_response(
+        SideCompService.standings(side_competition_id),
+        lambda standings: side_competition_results_json(standings, TeamNames(scope_of(tournament))),
+    )

@@ -357,21 +357,66 @@ def standings_json(team_stats: list[dict]) -> list[dict]:
     return sorted(rows, key=lambda row: str(row["team"]["name"]).lower())
 
 
-def side_competition_json(side_competition, registrants) -> dict:
+def side_competition_json(side_competition, registrant_count: int) -> dict:
     return {
         "id": side_competition.id,
         "name": side_competition.name,
         "type": _enum_value(side_competition.type),
         "description": side_competition.description,
         "registration_open": bool(side_competition.registration_open),
+        "active": bool(side_competition.active),
+        "finalized": bool(side_competition.finalized),
+        "allowed_weapons": side_competition.allowed_weapon_names(),
+        "track_losses": bool(side_competition.track_losses),
+        "track_chain_losses": bool(side_competition.track_chain_losses),
+        "track_break_losses": bool(side_competition.track_break_losses),
+        "results_available": side_competition.results_page_enabled(),
+        "registrant_count": registrant_count,
         "created_at": iso(side_competition.created_at),
+    }
+
+
+def side_competition_detail_json(side_competition, registrants) -> dict:
+    """*registrants* are ``(SideCompRegistration, Player)`` pairs; incomplete registrations are left out."""
+    complete = [(registration, player) for registration, player in registrants if registration.is_complete()]
+    return {
+        **side_competition_json(side_competition, len(complete)),
         "registrants": [
             {
                 "entry_number": registration.entry_number,
                 "player": {"id": registration.player, "name": player.name if player else registration.player},
+                "weapon": registration.weapon_name(),
                 "registered_at": iso(registration.registered_at),
             }
-            for registration, player in registrants
+            for registration, player in complete
+        ],
+    }
+
+
+def side_competition_results_json(standings: dict, teams: TeamNames) -> dict:
+    """Public tables of :meth:`~app.services.sidecomp_service.SideCompService.standings`."""
+    return {
+        "finalized": standings["finalized"],
+        "tables": [
+            {
+                "id": table["id"],
+                "title": table["title"],
+                "track_losses": table["track_losses"],
+                "rows": [
+                    {
+                        "rank": row["rank"],
+                        "entry_number": row["entry_number"],
+                        "weapon": row["weapon"],
+                        "player": {"id": row["player_id"], "name": row["display_name"]},
+                        "team": teams.reference(row["team_id"]) if row["team_id"] else None,
+                        "wins": row["wins"],
+                        "losses": row["losses"],
+                        "win_percentage": row["win_percentage"],
+                    }
+                    for row in table["rows"]
+                ],
+            }
+            for table in standings["tables"]
         ],
     }
 
