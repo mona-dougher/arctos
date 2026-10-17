@@ -377,6 +377,40 @@
     line-height: 1;
 }
 
+/* Edit page with fields but no matches: click-through hint over the grid. */
+.schedule-timeline-add-match-overlay {
+    position: absolute;
+    left: var(--time-col-width);
+    right: 0;
+    top: var(--header-height);
+    bottom: 0;
+    background: rgba(13, 110, 253, 0.05);
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* Sticky so the hint stays in view while the full-day grid scrolls. */
+.schedule-timeline-add-match-label {
+    position: sticky;
+    top: 40%;
+    display: block;
+    width: fit-content;
+    margin: 0 auto;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #6c757d;
+    font-weight: 500;
+}
+
+/* Edit page with no fields: replaces the grid. */
+.schedule-timeline-empty-message {
+    padding: 3rem 1rem;
+    text-align: center;
+    color: #6c757d;
+    font-weight: 500;
+}
+
 /* BREAK / JOIN: stable neutral look, no lifecycle chrome */
 .schedule-timeline-event--structural {
     border-style: dashed;

@@ -5343,6 +5343,12 @@ fn ScheduleTimeline(
             .filter(|f| f.id.to_string() == selected_field)
             .collect()
     };
+    let show_add_field_message = editor && !team_view && data.fields.is_empty();
+    let show_add_match_overlay = editor
+        && !team_view
+        && !data.fields.is_empty()
+        && data.matches.is_empty()
+        && pending_create.is_none();
 
     // Time scale: full day (00:00 to 24:00), 30-minute slots.
     //
@@ -6445,6 +6451,11 @@ fn ScheduleTimeline(
                     }
                 }
             }
+            if show_add_field_message {
+                div { class: "schedule-timeline-empty-message",
+                    "Add a field to start building your schedule."
+                }
+            } else {
             {
                 let scroll_id = scroll_el_id;
                 rsx! {
@@ -6589,6 +6600,13 @@ fn ScheduleTimeline(
                             class: "schedule-now-line",
                             style: "{style}",
                             span { class: "schedule-now-line-label", "Now" }
+                        }
+                    }
+                    if show_add_match_overlay {
+                        div { class: "schedule-timeline-add-match-overlay",
+                            span { class: "schedule-timeline-add-match-label",
+                                "Click anywhere to add a match"
+                            }
                         }
                     }
                     div { class: "schedule-timeline-header",
@@ -6938,6 +6956,7 @@ fn ScheduleTimeline(
             } // schedule-timeline-scroll
                 } // inner rsx! for scroll_id
             } // scroll_id block
+            } // show_add_field_message else
         } // wrapper
     } // outer rsx!
     }
