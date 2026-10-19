@@ -709,7 +709,12 @@ The scoreboard displays:
   - Current score by set
   - For stones matches: the stones remaining countdown with a progress bar
   - When no match is active: the previous and next match's teams (with
-    winner listed for the previous match).
+    winner listed for the previous match). The previous match is the
+    field's most recently completed match, and the next match is the one
+    listed after it in the field's schedule (for static matches, the next
+    one by scheduled start time). Breaks, joins, and skipped matches are
+    never shown, nor are matches on a different day than today in the
+    viewer's timezone.
 
 The scoreboard automatically polls for updates and refreshes when
 match state changes. For stones matches, the countdown updates in

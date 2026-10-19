@@ -43,8 +43,13 @@ def scoreboard_state():
 
     if not tournament_url or not field_name:
         return jsonify({"error": "Tournament and field parameters required"}), 400
+    tz_offset_minutes = request.args.get("tz_offset_minutes")
+    try:
+        tz_offset_minutes = int(tz_offset_minutes) if tz_offset_minutes is not None else None
+    except ValueError:
+        return jsonify({"error": "Invalid tz_offset_minutes"}), 400
 
-    state = ScoreboardService.field_state(tournament_url, field_name)
+    state = ScoreboardService.field_state(tournament_url, field_name, tz_offset_minutes)
 
     if state.active:
         match = state.active.match

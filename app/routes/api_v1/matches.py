@@ -74,7 +74,15 @@ def get_match(tournament, match_id: str):
 @require_bearer()
 @with_tournament
 def field_scoreboard(tournament, field_name: str):
-    """Live state of a field: the match in progress with its points, or the previous and next matches."""
+    """Live state of a field: the match in progress with its points, or the previous and next matches.
+
+    Query: ``tz_offset_minutes`` limits previous and next to the caller's current local day.
+    """
     if Field.query.filter_by(event=tournament.url, name=field_name).first() is None:
         return error("Field not found", 404)
-    return jsonify(scoreboard_json(ScoreboardService.field_state(tournament.url, field_name)))
+    tz_offset_minutes = request.args.get("tz_offset_minutes")
+    try:
+        tz_offset_minutes = int(tz_offset_minutes) if tz_offset_minutes is not None else None
+    except ValueError:
+        return error("Invalid tz_offset_minutes", 400)
+    return jsonify(scoreboard_json(ScoreboardService.field_state(tournament.url, field_name, tz_offset_minutes)))

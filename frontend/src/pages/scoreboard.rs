@@ -99,7 +99,7 @@ pub fn Scoreboard(url: String, field: String) -> Element {
         let f = field_for_poll.clone();
         let _tick = poll_tick();
         async move {
-            api::scoreboard_state(&u, &f)
+            api::scoreboard_state(&u, &f, crate::time_format::browser_tz_offset_minutes())
                 .await
                 .map_err(|e| e.to_string())
         }
