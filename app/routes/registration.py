@@ -448,13 +448,14 @@ def decline_invitation(tournament_url: str, invitation_id: int):
     ``POST /_api/<tournament_url>/invitation/<invitation_id>/decline``
 
     Only :class:`~app.models.user.Team` accounts may call this endpoint.
-    Transitions the player's registration from ``PENDING_TEAM_APPROVAL`` to
-    ``REJECTED``.
+    The player stays registered for the event as an unattached player: the
+    registration moves from ``PENDING_TEAM_APPROVAL`` to ``CONFIRMED`` with
+    no team.
 
     Args:
         tournament_url: Tournament URL slug from the path.
         invitation_id: Primary key of the
-            :class:`~app.models.registration.PlayerRegistration` to reject.
+            :class:`~app.models.registration.PlayerRegistration` to decline.
 
     Returns:
         JSON success or 403/404 error body.
@@ -472,7 +473,8 @@ def decline_invitation(tournament_url: str, invitation_id: int):
         status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
 
-    player_registration.status = RegistrationStatus.REJECTED
+    player_registration.status = RegistrationStatus.CONFIRMED
+    player_registration.team = None
     db.session.commit()
     return jsonify({"success": True, "message": "Player request declined"}), 200
 
@@ -1093,7 +1095,11 @@ def league_accept_invitation(league_url, invitation_id):
 @bp.route("/leagues/<league_url>/invitation/<int:invitation_id>/decline", methods=["POST"])
 @login_required
 def league_decline_invitation(league_url, invitation_id):
-    """Decline a pending player registration (league roster)."""
+    """Decline a pending player registration (league roster).
+
+    The player stays registered for the league as an unattached player
+    (``CONFIRMED`` with no team).
+    """
     if not is_team(current_user):
         return (
             jsonify({"success": False, "error": "Only teams can decline invitations"}),
@@ -1107,7 +1113,8 @@ def league_decline_invitation(league_url, invitation_id):
         status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
 
-    player_registration.status = RegistrationStatus.REJECTED
+    player_registration.status = RegistrationStatus.CONFIRMED
+    player_registration.team = None
     db.session.commit()
     return jsonify({"success": True, "message": "Player request declined"}), 200
 

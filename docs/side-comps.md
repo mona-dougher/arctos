@@ -11,7 +11,12 @@ qwik competitions in the future). TOs have the option to
 enable/disable any of the pompf choices when configuring the side
 comp.
 
-TOs have two other settings: 
+Any player registered for the tournament can register for its side
+comps, including players whose team hasn't approved their request
+yet. Until the team approves them, they compete in side comps as
+unattached (shown as a merc).
+
+TOs have three other settings: 
 1. registration open (can people register)
 2. active (can people submit results)
 3. number of results to make public

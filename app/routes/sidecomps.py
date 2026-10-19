@@ -104,7 +104,7 @@ def _detail_payload(sc, registrants):
                     viewer_weapon = reg.weapon_name()
                     break
             if not viewer_is_registered_in_comp and sc.registration_open:
-                event_reg = SideCompService._confirmed_player_registration_for_tournament(sc.event, current_user.id)
+                event_reg = SideCompService._eligible_player_registration_for_tournament(sc.event, current_user.id)
                 viewer_can_register = event_reg is not None
 
     return {
@@ -368,12 +368,15 @@ def deregister_player_as_to(comp_id: int):
 @bp.route("/sidecomps/<int:comp_id>/eligible-players", methods=["GET"])
 @login_required
 def eligible_players(comp_id: int):
-    """TO-only: list event-registered players with side competition status."""
-    from app.domain.enums import RegistrationStatus
+    """TO-only: list event-registered players with side competition status.
+
+    Includes players pending team approval, listed as unattached.
+    """
     from app.services.registration_resolver import (
         player_registrations_for_tournament,
         team_registrations_for_tournament,
     )
+    from app.services.sidecomp_service import _side_comp_team_id
     from models import (
         Player,
         SideComp,
@@ -399,10 +402,11 @@ def eligible_players(comp_id: int):
         ).all()
     }
 
-    event_regs = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
+    event_regs = player_registrations_for_tournament(tournament)
+    team_id_by_player = {er.player: _side_comp_team_id(er) for er in event_regs}
 
     player_ids = [er.player for er in event_regs]
-    team_ids = {er.team for er in event_regs if er.team}
+    team_ids = {team_id for team_id in team_id_by_player.values() if team_id}
 
     players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
     team_pseudonyms = {}
@@ -417,9 +421,9 @@ def eligible_players(comp_id: int):
         {
             "player_id": er.player,
             "player_name": players_by_id[er.player].name if er.player in players_by_id else er.player,
-            "team_id": er.team,
-            "team_pseudonym": team_pseudonyms.get(er.team) if er.team else None,
-            "team_shortname": team_shortnames.get(er.team) if er.team else None,
+            "team_id": team_id_by_player[er.player],
+            "team_pseudonym": team_pseudonyms.get(team_id_by_player[er.player]),
+            "team_shortname": team_shortnames.get(team_id_by_player[er.player]),
             "jersey_name": er.jersey_name,
             "sidecomp_registered": er.player in sidecomp_regs,
             "entry_number": sidecomp_regs[er.player].entry_number if er.player in sidecomp_regs else None,
