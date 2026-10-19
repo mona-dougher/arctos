@@ -1945,7 +1945,14 @@ def _make_pending_player(tournament_url):
     db.session.add(team)
     db.session.flush()
     db.session.add(
-        TeamRegistration(event=tournament_url, team=team.id, shortname="REQ", status="CONFIRMED", paid=True)
+        TeamRegistration(
+            event=tournament_url,
+            team=team.id,
+            pseudonym="Requested Team",
+            shortname="REQ",
+            status="CONFIRMED",
+            paid=True,
+        )
     )
     p = _make_player("pending_p", "Pending")
     db.session.add(

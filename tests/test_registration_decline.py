@@ -50,6 +50,7 @@ def test_league_declined_player_becomes_confirmed_unattached(app, client, player
                 event=None,
                 league_id=league.url,
                 team=team_id,
+                pseudonym="Test Team",
                 status=TeamRegistrationStatus.CONFIRMED,
             )
         )
