@@ -1677,11 +1677,16 @@ pub async fn server_time() -> Result<ServerTimeResponse, String> {
 pub async fn scoreboard_state(
     tournament_url: &str,
     field_name: &str,
+    tz_offset_minutes: i64,
 ) -> Result<ScoreboardStateResponse, String> {
     let c = client();
+    let tz_offset_minutes = tz_offset_minutes.to_string();
     let r = with_credentials(
-        c.get(format!("{}/_api/scoreboard-state", base()))
-            .query(&[("tournament", tournament_url), ("field", field_name)]),
+        c.get(format!("{}/_api/scoreboard-state", base())).query(&[
+            ("tournament", tournament_url),
+            ("field", field_name),
+            ("tz_offset_minutes", tz_offset_minutes.as_str()),
+        ]),
     )
     .send()
     .await

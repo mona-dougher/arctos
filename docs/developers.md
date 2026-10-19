@@ -487,7 +487,12 @@ URL-encode the field name (`Field%201`). While a match is in progress:
 
 `points` is ordered by `stamp` and includes the point being played.
 When the field is idle, `match` is `null` and the previous and next
-matches (either may be `null`) are included instead:
+matches (either may be `null`) are included instead. `previous` is the
+field's most recently completed match and `next` is the match scheduled
+after it; breaks, joins, and skipped matches are never included. Pass
+`?tz_offset_minutes=` (minutes to add to UTC for local time, e.g. `-420`
+for UTC-7) to leave out matches that aren't on the current day in that
+timezone (`previous` by when it ended, `next` by its expected start):
 
 ```json
 {

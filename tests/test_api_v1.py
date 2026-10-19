@@ -84,6 +84,7 @@ def world(test_db, tournament, team, team_registration, player):
             field=field,
             team1=team.id,
             team2=rivals.id,
+            scheduled_start_time=start,
             nominal_start_time=start,
             nominal_length=30,
             schedule_type=ScheduleType.STATIC,
@@ -342,6 +343,14 @@ def test_scoreboard_idle_field(client, world, token):
     assert body["next"]["team2"] == {"name": "The Rivals", "shortname": "RIV"}
 
 
+def test_scoreboard_tz_offset_hides_matches_from_other_days(client, world, token):
+    url = "/api/v1/tournaments/test-tournament/fields/Field%202/scoreboard"
+    response = client.get(f"{url}?tz_offset_minutes=-420", headers=_bearer(token))
+    assert response.get_json() == {"match": None, "previous": None, "next": None}
+    invalid = client.get(f"{url}?tz_offset_minutes=pacific", headers=_bearer(token))
+    assert invalid.status_code == 400
+
+
 def test_scoreboard_field_names_are_url_encoded(client, world, token):
     url = f"/api/v1/tournaments/test-tournament/fields/{quote('North / Main', safe='')}/scoreboard"
     response = client.get(url, headers=_bearer(token))
@@ -362,6 +371,10 @@ def test_internal_scoreboard_state_is_unchanged(client, world):
     assert idle["has_active_match"] is False
     assert idle["prev_match"]["winner"] == "TEAM2"
     assert idle["next_match"]["team2_name"] == "The Rivals"
+    other_day = client.get(
+        "/_api/scoreboard-state?tournament=test-tournament&field=Field%202&tz_offset_minutes=0"
+    ).get_json()
+    assert (other_day["prev_match"], other_day["next_match"]) == (None, None)
 
 
 def test_injuries_respect_privacy_and_scope(client, world, token):

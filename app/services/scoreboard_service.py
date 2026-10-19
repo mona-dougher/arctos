@@ -20,7 +20,7 @@ from typing import Any
 from app.domain.enums import STRUCTURAL_SCHEDULE_TYPES, MatchStatus, SetType, WinnerSide
 from app.error_values import Err, Ok, Result
 from app.exceptions import ArctosError, NotFoundError, ValidationError
-from app.utils.datetime_helpers import to_iso_z
+from app.utils.datetime_helpers import now_utc_naive, to_iso_z
 
 # Stones tick down on global beat boundaries (multiples of this period since the
 # Unix epoch). Must match the frontend scoreboard's beat.
@@ -54,8 +54,9 @@ class FieldScoreboard:
         points: The active match's points ordered by stamp.
         set_scores: The active match's ``set number -> (team1, team2)``
             points, ordered by set number.
-        previous: Most recently finished match, only computed when idle.
-        next: Upcoming match, only computed when idle.
+        previous: Most recently completed match, only computed when idle
+            (see :meth:`ScoreboardService.previous_and_next`).
+        next: The match after *previous*, only computed when idle.
     """
 
     active: ScoreboardMatch | None
@@ -165,8 +166,12 @@ def _scoreboard_match(tournament, match) -> ScoreboardMatch:
 @dataclass(frozen=True)
 class ScoreboardService:
     @staticmethod
-    def field_state(tournament_url: str, field_name: str) -> FieldScoreboard:
-        """Scoreboard state of the field named *field_name* in *tournament_url*."""
+    def field_state(tournament_url: str, field_name: str, tz_offset_minutes: int | None = None) -> FieldScoreboard:
+        """Scoreboard state of the field named *field_name* in *tournament_url*.
+
+        Args:
+            tz_offset_minutes: Viewer's offset from UTC; see :meth:`previous_and_next`.
+        """
         from models import Match, Point, Tournament
 
         tournament = Tournament.query.get(tournament_url)
@@ -179,31 +184,80 @@ class ScoreboardService:
                 set_scores=set_scores(points),
             )
 
-        field_matches = (
-            Match.query.filter_by(event=tournament_url, field=field_name)
-            .order_by(Match.nominal_start_time.asc(), Match.completed_time.asc())
-            .all()
-        )
-        games = [m for m in field_matches if m.schedule_type not in STRUCTURAL_SCHEDULE_TYPES]
-        finished = (MatchStatus.COMPLETED, MatchStatus.SKIPPED)
-        previous = next(
-            (m for m in reversed(games) if m.status in finished and m.completed_time),
-            None,
-        )
-        upcoming = next(
-            (
-                m
-                for m in games
-                if m.status in (MatchStatus.NOT_STARTED, MatchStatus.IN_PROGRESS)
-                or (m.status in finished and not m.completed_time)
-            ),
-            None,
-        )
+        field_matches = Match.query.filter_by(event=tournament_url, field=field_name).all()
+        previous, upcoming = ScoreboardService.previous_and_next(field_matches, now_utc_naive(), tz_offset_minutes)
         return FieldScoreboard(
             active=None,
             previous=_scoreboard_match(tournament, previous) if previous else None,
             next=_scoreboard_match(tournament, upcoming) if upcoming else None,
         )
+
+    @staticmethod
+    def previous_and_next(
+        field_matches: list, now: datetime, tz_offset_minutes: int | None
+    ) -> tuple["Match | None", "Match | None"]:
+        """The matches an idle field's scoreboard shows as previous and next.
+
+        Previous is the most recently completed match. Next follows
+        previous's ``next_match`` chain past breaks, joins, and finished
+        matches; when the chain doesn't lead to one (static matches are never
+        chained), next is the first unfinished match after previous by
+        ``scheduled_start_time``. Before any match has completed, next is the
+        field's first unfinished match. Breaks, joins, and skipped matches are
+        never shown.
+
+        Args:
+            field_matches: Every match on the field, including breaks and joins.
+            now: Current naive UTC time.
+            tz_offset_minutes: Viewer's offset from UTC (``local = utc + offset``).
+                When given, a match is only shown if it falls on the viewer's
+                current local day: previous by ``completed_time``, next by
+                ``nominal_start_time``.
+        """
+        matches_by_uuid = {match.uuid: match for match in field_matches}
+        games = sorted(
+            (match for match in field_matches if match.schedule_type not in STRUCTURAL_SCHEDULE_TYPES),
+            key=lambda match: match.scheduled_start_time or datetime.max,
+        )
+
+        def is_upcoming(match) -> bool:
+            return match.schedule_type not in STRUCTURAL_SCHEDULE_TYPES and match.status not in (
+                MatchStatus.COMPLETED,
+                MatchStatus.SKIPPED,
+            )
+
+        def next_in_chain(match):
+            visited = {match.uuid}
+            link = match.next_match
+            while link in matches_by_uuid and link not in visited:
+                visited.add(link)
+                linked = matches_by_uuid[link]
+                if is_upcoming(linked):
+                    return linked
+                link = linked.next_match
+            return None
+
+        completed = [match for match in games if match.status == MatchStatus.COMPLETED and match.completed_time]
+        previous = max(completed, key=lambda match: match.completed_time, default=None)
+        if previous is None:
+            upcoming = next((match for match in games if is_upcoming(match)), None)
+        else:
+            upcoming = next_in_chain(previous) or next(
+                (match for match in games[games.index(previous) + 1 :] if is_upcoming(match)), None
+            )
+
+        if tz_offset_minutes is not None:
+            offset = timedelta(minutes=tz_offset_minutes)
+            today = (now + offset).date()
+
+            def is_today(moment: datetime | None) -> bool:
+                return moment is not None and (moment + offset).date() == today
+
+            if previous and not is_today(previous.completed_time):
+                previous = None
+            if upcoming and not is_today(upcoming.nominal_start_time):
+                upcoming = None
+        return previous, upcoming
 
     @staticmethod
     def active_match_state(
