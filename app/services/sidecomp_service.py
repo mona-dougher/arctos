@@ -106,6 +106,19 @@ def _resolve_team_short_label(
     return _team_display_short(shortname, team_name)
 
 
+def _side_comp_team_id(event_reg) -> str | None:
+    """Return the team a player represents in side comps.
+
+    Players pending team approval are eligible for side comps but count as
+    unattached until the team confirms them.
+    """
+    from app.domain.enums import RegistrationStatus
+
+    if event_reg is None or event_reg.status != RegistrationStatus.CONFIRMED:
+        return None
+    return event_reg.team
+
+
 @dataclass(frozen=True)
 class SideCompService:
     """Side competition workflows. Static methods, namespace dataclass."""
@@ -203,8 +216,8 @@ class SideCompService:
         return Ok(None)
 
     @staticmethod
-    def _confirmed_player_registration_for_tournament(tournament_url: str, player_id: str):
-        from app.domain.enums import RegistrationStatus
+    def _eligible_player_registration_for_tournament(tournament_url: str, player_id: str):
+        """Return *player_id*'s confirmed or pending-team-approval event registration, if any."""
         from app.services.registration_resolver import player_registrations_for_tournament
         from models import Tournament
 
@@ -212,7 +225,7 @@ class SideCompService:
         if tournament is None:
             return None
 
-        registrations = player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
+        registrations = player_registrations_for_tournament(tournament)
         for registration in registrations:
             if registration.player == player_id:
                 return registration
@@ -318,6 +331,28 @@ class SideCompService:
         from models import SideComp
 
         return SideComp.query.filter_by(event=tournament_url).order_by(SideComp.created_at.asc()).all()
+
+    @staticmethod
+    def list_with_registrant_counts(tournament_url: str) -> list[tuple]:
+        """Return ``(SideComp, registrant count)`` for *tournament_url*, oldest first.
+
+        Incomplete registrations are not counted.
+        """
+        from sqlalchemy import func
+
+        from models import SideComp, SideCompRegistration, db
+
+        return (
+            db.session.query(SideComp, func.count(SideCompRegistration.id))
+            .outerjoin(
+                SideCompRegistration,
+                (SideCompRegistration.comp == SideComp.id) & SideCompRegistration.weapon.isnot(None),
+            )
+            .filter(SideComp.event == tournament_url)
+            .group_by(SideComp.id)
+            .order_by(SideComp.created_at.asc())
+            .all()
+        )
 
     @staticmethod
     def get_with_registrants(comp_id: int) -> Result[tuple, ArctosError]:
@@ -533,7 +568,7 @@ class SideCompService:
         if not sc.registration_open:
             return Err(RegistrationClosedError("This side competition is not open for registration"))
 
-        event_reg = SideCompService._confirmed_player_registration_for_tournament(sc.event, player_id)
+        event_reg = SideCompService._eligible_player_registration_for_tournament(sc.event, player_id)
         if not event_reg:
             return Err(ValidationError("You must be registered for the event before joining a side competition"))
 
@@ -607,7 +642,7 @@ class SideCompService:
         if target is None:
             return Err(ValidationError("Player not found"))
 
-        event_reg = SideCompService._confirmed_player_registration_for_tournament(sc.event, player_id)
+        event_reg = SideCompService._eligible_player_registration_for_tournament(sc.event, player_id)
         if not event_reg:
             return Err(ValidationError("Player is not registered for this event"))
 
@@ -838,7 +873,6 @@ class SideCompService:
         registration here (``registration_id`` is ``None``). Fully
         registered players come first, then by entry number.
         """
-        from app.domain.enums import RegistrationStatus
         from app.services.registration_resolver import (
             player_registrations_for_tournament,
             team_registrations_for_tournament,
@@ -864,11 +898,9 @@ class SideCompService:
         players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
 
         event_regs = {
-            er.player: er
-            for er in player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED])
-            if er.player in players_by_id
+            er.player: er for er in player_registrations_for_tournament(tournament) if er.player in players_by_id
         }
-        team_ids = {er.team for er in event_regs.values() if er.team}
+        team_ids = {team_id for team_id in map(_side_comp_team_id, event_regs.values()) if team_id}
         teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(team_ids)).all()} if team_ids else {}
         team_shortnames = {}
         team_pseudonyms = {}
@@ -883,7 +915,7 @@ class SideCompService:
             reg = regs_by_player.get(player_id)
             player = players_by_id.get(player_id)
             event_reg = event_regs.get(player_id)
-            team_id = event_reg.team if event_reg else None
+            team_id = _side_comp_team_id(event_reg)
             team = teams_by_id.get(team_id) if team_id else None
             display_team_name = None
             if team_id:
@@ -1104,7 +1136,6 @@ class SideCompService:
         actor_user_type: str,
     ) -> Result[dict, ArctosError]:
         """TO-only: every logged point for *comp_id*, oldest first."""
-        from app.domain.enums import RegistrationStatus
         from app.services.registration_resolver import (
             player_registrations_for_tournament,
             team_registrations_for_tournament,
@@ -1127,10 +1158,10 @@ class SideCompService:
         team_pseudonyms = {}
         teams_by_id = {}
         if tournament is not None and player_ids:
-            for er in player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED]):
+            for er in player_registrations_for_tournament(tournament):
                 if er.player in players_by_id:
                     event_regs[er.player] = er
-            team_ids = {er.team for er in event_regs.values() if er.team}
+            team_ids = {team_id for team_id in map(_side_comp_team_id, event_regs.values()) if team_id}
             if team_ids:
                 teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(team_ids)).all()}
                 for tr in team_registrations_for_tournament(tournament):
@@ -1149,7 +1180,7 @@ class SideCompService:
             player_id = reg.player if reg else None
             player = players_by_id.get(player_id) if player_id else None
             event_reg = event_regs.get(player_id) if player_id else None
-            team_id = event_reg.team if event_reg else None
+            team_id = _side_comp_team_id(event_reg)
             team = teams_by_id.get(team_id) if team_id else None
             display_team_name = None
             if team_id:
@@ -1195,7 +1226,7 @@ class SideCompService:
         """
         from sqlalchemy import case, func
 
-        from app.domain.enums import Pompfen, RegistrationStatus, SideCompType
+        from app.domain.enums import Pompfen, SideCompType
         from app.services.registration_resolver import (
             player_registrations_for_tournament,
             team_registrations_for_tournament,
@@ -1235,10 +1266,10 @@ class SideCompService:
         team_pseudonyms = {}
         teams_by_id = {}
         if tournament is not None and player_ids:
-            for er in player_registrations_for_tournament(tournament, statuses=[RegistrationStatus.CONFIRMED]):
+            for er in player_registrations_for_tournament(tournament):
                 if er.player in players_by_id:
                     event_regs[er.player] = er
-            team_ids = {er.team for er in event_regs.values() if er.team}
+            team_ids = {team_id for team_id in map(_side_comp_team_id, event_regs.values()) if team_id}
             if team_ids:
                 teams_by_id = {t.id: t for t in Team.query.filter(Team.id.in_(team_ids)).all()}
                 for tr in team_registrations_for_tournament(tournament):
@@ -1252,7 +1283,7 @@ class SideCompService:
             win_percentage = 100 * wins / (wins + losses) if losses is not None and wins + losses > 0 else None
             player = players_by_id.get(reg.player)
             event_reg = event_regs.get(reg.player)
-            team_id = event_reg.team if event_reg else None
+            team_id = _side_comp_team_id(event_reg)
             team = teams_by_id.get(team_id) if team_id else None
             display_team_name = None
             if team_id:
@@ -1271,6 +1302,7 @@ class SideCompService:
                 "profile_photo": player.profile_photo if player else None,
                 "jersey_name": event_reg.jersey_name if event_reg else None,
                 "jersey_number": event_reg.jersey_number if event_reg else None,
+                "team_id": team_id,
                 "team_shortname": shortname,
                 "team_profile_photo": teams_by_id[team_id].profile_photo
                 if team_id and team_id in teams_by_id

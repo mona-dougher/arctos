@@ -1677,11 +1677,16 @@ pub async fn server_time() -> Result<ServerTimeResponse, String> {
 pub async fn scoreboard_state(
     tournament_url: &str,
     field_name: &str,
+    tz_offset_minutes: i64,
 ) -> Result<ScoreboardStateResponse, String> {
     let c = client();
+    let tz_offset_minutes = tz_offset_minutes.to_string();
     let r = with_credentials(
-        c.get(format!("{}/_api/scoreboard-state", base()))
-            .query(&[("tournament", tournament_url), ("field", field_name)]),
+        c.get(format!("{}/_api/scoreboard-state", base())).query(&[
+            ("tournament", tournament_url),
+            ("field", field_name),
+            ("tz_offset_minutes", tz_offset_minutes.as_str()),
+        ]),
     )
     .send()
     .await
@@ -3546,4 +3551,134 @@ pub async fn sidecomp_standings(comp_id: i32) -> Result<SideCompStandings, Strin
     .await
     .map_err(|e| e.to_string())?;
     response_json(r).await
+}
+
+#[derive(serde::Deserialize)]
+struct RedirectResponse {
+    redirect: String,
+}
+
+#[derive(serde::Deserialize)]
+struct OAuthClientsResponse {
+    clients: Vec<OAuthClient>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct OAuthClientResponse {
+    pub client: OAuthClient,
+    pub client_secret: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ClientSecretResponse {
+    client_secret: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ConnectedAppsResponse {
+    apps: Vec<ConnectedApp>,
+}
+
+/// `query` is the authorization request's query string, without the leading `?`.
+pub async fn oauth_authorization_request(query: &str) -> Result<OAuthAuthorizationRequest, String> {
+    let r = with_credentials(client().get(format!("{}/_api/oauth/authorize?{}", base(), query)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+/// Returns the URL to send the browser to.
+pub async fn oauth_decide(query: &str, approve: bool) -> Result<String, String> {
+    let body = serde_json::json!({ "approve": approve });
+    let r = with_credentials(
+        client()
+            .post(format!("{}/_api/oauth/authorize?{}", base(), query))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json::<RedirectResponse>(r).await.map(|response| response.redirect)
+}
+
+pub async fn oauth_clients() -> Result<Vec<OAuthClient>, String> {
+    let r = with_credentials(client().get(format!("{}/_api/oauth/clients", base())))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json::<OAuthClientsResponse>(r).await.map(|response| response.clients)
+}
+
+pub async fn create_oauth_client(
+    name: &str,
+    homepage_url: &str,
+    redirect_uris: &[String],
+    confidential: bool,
+) -> Result<OAuthClientResponse, String> {
+    let body = serde_json::json!({
+        "name": name,
+        "homepage_url": homepage_url,
+        "redirect_uris": redirect_uris,
+        "confidential": confidential,
+    });
+    let r = with_credentials(client().post(format!("{}/_api/oauth/clients", base())).json(&body))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json(r).await
+}
+
+pub async fn update_oauth_client(
+    client_id: &str,
+    name: &str,
+    homepage_url: &str,
+    redirect_uris: &[String],
+) -> Result<OAuthClient, String> {
+    let body = serde_json::json!({
+        "name": name,
+        "homepage_url": homepage_url,
+        "redirect_uris": redirect_uris,
+    });
+    let r = with_credentials(
+        client()
+            .put(format!("{}/_api/oauth/clients/{}", base(), client_id))
+            .json(&body),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
+    response_json::<OAuthClientResponse>(r).await.map(|response| response.client)
+}
+
+pub async fn rotate_oauth_client_secret(client_id: &str) -> Result<String, String> {
+    let r = with_credentials(client().post(format!("{}/_api/oauth/clients/{}/secret", base(), client_id)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json::<ClientSecretResponse>(r).await.map(|response| response.client_secret)
+}
+
+pub async fn delete_oauth_client(client_id: &str) -> Result<(), String> {
+    let r = with_credentials(client().delete(format!("{}/_api/oauth/clients/{}", base(), client_id)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json::<Value>(r).await.map(|_| ())
+}
+
+pub async fn connected_apps() -> Result<Vec<ConnectedApp>, String> {
+    let r = with_credentials(client().get(format!("{}/_api/oauth/connected-apps", base())))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json::<ConnectedAppsResponse>(r).await.map(|response| response.apps)
+}
+
+pub async fn disconnect_app(client_id: &str) -> Result<(), String> {
+    let r = with_credentials(client().delete(format!("{}/_api/oauth/connected-apps/{}", base(), client_id)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    response_json::<Value>(r).await.map(|_| ())
 }

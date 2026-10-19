@@ -1,5 +1,5 @@
 use crate::api;
-use crate::components::ChangePasswordCard;
+use crate::components::{ChangePasswordCard, ConnectedAppsCard};
 use crate::types::{UpdatePlayerProfileRequest};
 use dioxus::prelude::*;
 use dioxus::prelude::use_navigator;
@@ -63,6 +63,8 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
             }
         }
     };
+
+    let own_profile = me.read().as_ref().and_then(|r| r.as_ref().ok()).map(|u| u.id == player_id).unwrap_or(false);
 
     rsx! {
         div { class: "row",
@@ -239,6 +241,9 @@ pub fn EditPlayerProfile(player_id: String) -> Element {
 
                     if me.read().as_ref().and_then(|r| r.as_ref().ok()).map(|u| u.has_password).unwrap_or(false) {
                         ChangePasswordCard {}
+                    }
+                    if own_profile {
+                        ConnectedAppsCard {}
                     }
 
                 }

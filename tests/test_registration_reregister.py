@@ -22,7 +22,7 @@ def test_player_can_reregister_after_rejected_without_creating_duplicate_row(app
         team_id = tm.id
         login_as(client, p)
 
-        # Seed a rejected registration row (simulating team decline)
+        # Seed a rejected registration row (declines no longer produce these, but older rows may exist)
         reg = PlayerRegistration(
             event=tournament_url,
             player=player_id,

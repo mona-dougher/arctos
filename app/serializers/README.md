@@ -5,6 +5,10 @@ They live in their own package (rather than as methods on the models)
 so they can resolve cross-cutting display details - registration
 pseudonyms, head-ref permissions - without bloating the model classes.
 
+`api_v1_serializer.py` is the exception: it holds the shapes of the
+public API (`/api/v1`), which are a contract with third-party apps.
+Don't reuse the SPA serializers there, and only ever add fields to it.
+
 ## Pattern
 
 Each serialiser is a `@dataclass(frozen=True)` namespace with

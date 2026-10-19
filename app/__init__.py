@@ -152,6 +152,9 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.tournaments import executor
 
     executor.init_app(app)
+    from app.utils.oauth_server import init_oauth_server
+
+    init_oauth_server(app)
     # Register Google OAuth client
     if app.config.get("GOOGLE_CLIENT_ID") and app.config.get("GOOGLE_CLIENT_SECRET"):
         oauth.register(
@@ -242,6 +245,8 @@ def create_app(config: dict | None = None) -> Flask:
     from app.routes.penalty_types import bp as penalty_types_bp
     from app.routes.players import bp as players_bp
     from app.routes.teams import bp as teams_bp
+    from app.routes.oauth import bp as oauth_bp
+    from app.routes.api_v1 import bp as api_v1_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(tournaments_bp)
@@ -254,6 +259,8 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(penalty_types_bp)
     app.register_blueprint(players_bp)
     app.register_blueprint(teams_bp)
+    app.register_blueprint(oauth_bp)
+    app.register_blueprint(api_v1_bp)
 
     # Register template filters
     from app import filters
@@ -285,9 +292,22 @@ def create_app(config: dict | None = None) -> Flask:
         h["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept"
         h["Vary"] = "Origin"
 
+    # The public API (/api/) authenticates with bearer tokens, never cookies, so any origin may call it.
+    def _is_public_api(path: str) -> bool:
+        return path.startswith("/api/")
+
+    def _add_public_api_cors_headers(headers):
+        headers["Access-Control-Allow-Origin"] = "*"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+
     @app.after_request
     def add_cors_for_api(response):
         from flask import request
+
+        if _is_public_api(request.path):
+            _add_public_api_cors_headers(response.headers)
+            return response
 
         # When ARCTOS_CORS_DEV=1, add CORS for all requests (any path with Origin).
         # Otherwise only for /_api and (in dev) /static/
@@ -305,6 +325,9 @@ def create_app(config: dict | None = None) -> Flask:
     @app.before_request
     def handle_api_preflight():
         from flask import request, make_response
+
+        if request.method == "OPTIONS" and _is_public_api(request.path):
+            return make_response("", 204)
 
         # When ARCTOS_CORS_DEV=1, handle OPTIONS preflight for any path.
         # Otherwise only for /_api and (in dev) /static/

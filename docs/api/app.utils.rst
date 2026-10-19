@@ -22,6 +22,7 @@ app.utils
    app.utils.responses
    app.utils.result_helpers
    app.utils.scheduling
+   app.utils.scoreboard_render
    app.utils.toml_helpers
    app.utils.user_helpers
    app.utils.user_uploads

@@ -45,8 +45,9 @@ their code.
 - **Frontend.** Single-page app written in Rust with [Dioxus],
   compiled to WebAssembly. nginx serves the SPA at `/`.
 - **Backend.** Python 3.12 [Flask] app run under gunicorn. Serves only
-  JSON, exclusively under the `/_api/` prefix. `/api/` (no underscore)
-  is reserved for a future public API and is not used.
+  JSON. The SPA uses routes under `/_api/`; `/api/` (no underscore) is
+  the public, OAuth-authenticated API for third-party apps, documented
+  in [`docs/developers.md`](docs/developers.md).
 - **Database.** A single SQLite file (`tournament.db`). WAL mode is
   enabled so background workers and HTTP handlers can share the file
   without blocking each other. Foreign keys are enforced via
@@ -65,7 +66,7 @@ their code.
 |------|-----------------|
 | [`app/`](app/README.md) | Flask backend: factory, blueprints, services, models, utils. |
 | [`app/models/`](app/models/README.md) | SQLAlchemy ORM models - the canonical domain shape. |
-| [`app/routes/`](app/routes/README.md) | Flask blueprints. Every route lives under `/_api/`. |
+| [`app/routes/`](app/routes/README.md) | Flask blueprints: the SPA's `/_api/` routes and the public `/api/`. |
 | [`app/services/`](app/services/README.md) | Application-workflow code that routes call into. |
 | [`app/utils/`](app/utils/README.md) | Helpers: scheduling, the ASS Lisp DSL, datetime, video pipeline. |
 | [`app/domain/`](app/domain/README.md) | Domain enums (`MatchStatus`, `ScheduleType`, ...). |
@@ -207,8 +208,9 @@ HTML report path and how the threshold is meant to move.
 
 ## Conventions
 
-- **All API routes live under `/_api/`.** Tests and the frontend always
-  hit `/_api/...`.
+- **SPA routes live under `/_api/`.** The frontend always hits
+  `/_api/...`; only the public API (`/api/`, bearer tokens) lives
+  elsewhere.
 - **Routes return JSON, not redirects.** Success is `200`; validation
   failure is `400`; unauthenticated is `401`. Don't assert on redirect
   codes in tests.
@@ -239,7 +241,7 @@ Take `POST /_api/<tournament_url>/register-team`:
 1. **Frontend** (`frontend/src/`) builds a form, POSTs via `reqwest`
    with credentials.
 2. **nginx** (in production) proxies anything starting with `/_api/`
-   to gunicorn; everything else is the SPA. In dev with
+   or `/api/` to gunicorn; everything else is the SPA. In dev with
    `ARCTOS_CORS_DEV=1` the browser hits Flask directly.
 3. **Flask** routes the request to
    `app/routes/registration.py::register_team_for_tournament`.

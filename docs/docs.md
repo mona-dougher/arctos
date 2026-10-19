@@ -50,6 +50,10 @@ For TOs
  - [OBS Scoreboard Integration](#obs-scoreboard-integration)
  - [Recording Matches](#recording-matches)
 
+For Developers
+
+ - [Sign in with Arctos and the Arctos API](developers.md)
+
 
 ---
 
@@ -241,7 +245,8 @@ Here's, briefly, how it works.
        unattached (as a free merc)
      - they enter their jersey name and number for this tournament
   5. Teams accept player's requests to join their team, finalizing the
-     player's registration.
+     player's registration. If a team declines a request, the player
+     stays registered as an unattached free merc.
   6. TOs continuously perform registration management
      - As teams and/or players submit their registration payments, TOs
        mark them paid (optionally notating the amount paid) on the
@@ -657,6 +662,11 @@ qwik competitions in the future). TOs have the option to
 enable/disable any of the pompf choices when configuring the side
 comp.
 
+Any player registered for the tournament can register for its side
+comps, including players whose team hasn't approved their request
+yet. Until the team approves them, they compete in side comps as
+unattached (shown as a merc).
+
 TOs have three other settings: 
 1. registration open (can people register)
 2. active (can people submit results)
@@ -705,7 +715,12 @@ The scoreboard displays:
   - Current score by set
   - For stones matches: the stones remaining countdown with a progress bar
   - When no match is active: the previous and next match's teams (with
-    winner listed for the previous match).
+    winner listed for the previous match). The previous match is the
+    field's most recently completed match, and the next match is the one
+    listed after it in the field's schedule (for static matches, the next
+    one by scheduled start time). Breaks, joins, and skipped matches are
+    never shown, nor are matches on a different day than today in the
+    viewer's timezone.
 
 The scoreboard automatically polls for updates and refreshes when
 match state changes. For stones matches, the countdown updates in

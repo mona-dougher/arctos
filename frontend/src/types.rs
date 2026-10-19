@@ -1238,7 +1238,7 @@ pub struct ServerTimeResponse {
     pub timestamp: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScoreboardStateResponse {
     pub has_active_match: bool,
     pub match_id: Option<String>,
@@ -1257,21 +1257,21 @@ pub struct ScoreboardStateResponse {
     pub timestamp: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StonesInfo {
     pub stones_per_set: u32,
     pub stones_remaining: Option<u32>,
 }
 
 /// Point data for live stones computation on scoreboard (STONES matches).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ScoreboardPointForStones {
     pub stamp: Option<String>,
     pub end_stamp: Option<String>,
     pub stones_at_start: Option<u32>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PrevNextMatch {
     pub team1_name: String,
     pub team2_name: String,
@@ -1949,4 +1949,59 @@ pub struct SideCompManageResults {
     #[serde(default)]
     pub finalized: bool,
     pub results: Vec<SideCompManageResultRow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthScope {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthConsentClient {
+    pub client_id: String,
+    pub name: String,
+    pub homepage_url: Option<String>,
+    pub owner_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthConsentUser {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthConsent {
+    pub client: OAuthConsentClient,
+    pub scopes: Vec<OAuthScope>,
+    pub user: OAuthConsentUser,
+}
+
+/// The authorization request either needs the user's consent or must
+/// send them straight back to the app (e.g. with an error).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum OAuthAuthorizationRequest {
+    Redirect { redirect: String },
+    Consent(OAuthConsent),
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct OAuthClient {
+    pub client_id: String,
+    pub name: String,
+    pub homepage_url: Option<String>,
+    pub redirect_uris: Vec<String>,
+    pub confidential: bool,
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ConnectedApp {
+    pub client_id: String,
+    pub name: String,
+    pub homepage_url: Option<String>,
+    pub scopes: Vec<OAuthScope>,
+    pub last_used_at: Option<String>,
 }

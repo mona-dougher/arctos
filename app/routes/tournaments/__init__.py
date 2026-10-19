@@ -12,6 +12,8 @@ URL endpoint names are stable across moves:
   push-back, import/export, DSL validation.
 - :mod:`app.routes.tournaments.footage` - the footage API: TO-authenticated
   video upload (YouTube link or chunked file) plus footage list/delete.
+- :mod:`app.routes.tournaments.scoreboard_overlay` - rendered scoreboard
+  overlay frames for compositing over recorded match footage.
 """
 
 from flask import Blueprint
@@ -191,4 +193,5 @@ from app.routes.tournaments import (  # noqa: E402, F401
     matches_admin,
     read,
     scheduling,
+    scoreboard_overlay,
 )

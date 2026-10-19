@@ -2,6 +2,7 @@
 
 mod ass_entry;
 mod change_password_card;
+mod connected_apps_card;
 mod edit_registration_modal;
 mod event_about;
 mod team_registration_help_modal;
@@ -18,6 +19,7 @@ mod team_token_input;
 
 pub use ass_entry::AssEntry;
 pub use change_password_card::ChangePasswordCard;
+pub use connected_apps_card::ConnectedAppsCard;
 pub use edit_registration_modal::{EditRegistrationContext, EditRegistrationModal};
 pub use event_about::EventAbout;
 pub use event_header::EventHeader;

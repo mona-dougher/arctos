@@ -32,6 +32,7 @@ fn page_title_for_route(route: &Route) -> String {
         Route::RunMatch { .. } => format!("Run Match").into(),
         Route::FinalizeMatch { .. } => format!("Finalize Match").into(),
         Route::Scoreboard { .. } => format!("Scoreboard"),
+        Route::ScoreboardRender { .. } => "Scoreboard Render".into(),
         Route::MatchPage { .. } => format!("Match"),
         Route::MatchPageById { .. } => format!("Match").into(),
         Route::AddInjury { .. } => "Add Injury".into(),
@@ -62,6 +63,9 @@ fn page_title_for_route(route: &Route) -> String {
         Route::License { .. } => "License".into(),
         Route::ArctosScheduleScript { .. } => "Arctos Schedule Script".into(),
         Route::DataAccessibilityGuide { .. } => "Data Accessibility Guide".into(),
+        Route::Developers { .. } => "For Developers".into(),
+        Route::DeveloperApps { .. } => "Your Apps".into(),
+        Route::OAuthAuthorize { .. } => "Sign in with Arctos".into(),
         Route::SideCompNew { url } => format!("{url} New Side Competition"),
         Route::SideCompDetail { url, .. } => format!("{url} Side Competition"),
         Route::SideCompEdit { url, .. } => format!("{url} Edit Side Competition"),
@@ -91,6 +95,10 @@ pub fn Layout() -> Element {
     let route = use_route::<Route>();
     let page_title = format!("{} | Arctos", page_title_for_route(&route));
 
+    // Offline overlay frames are screenshotted at a fixed size, so they get no page styles at all.
+    if matches!(route, Route::ScoreboardRender { .. }) {
+        return rsx! { Outlet::<Route> {} };
+    }
     // Scoreboard is embedded elsewhere (e.g. OBS); render only the raw scoreboard, no nav/footer.
     // Enter-results is a mobile scoring surface — same minimal chrome.
     if matches!(route, Route::Scoreboard { .. } | Route::SideCompEnterResults { .. }) {
@@ -284,6 +292,8 @@ pub fn Layout() -> Element {
                     Link { to: Route::Thanks {}, "Thanks" }
                     " - "
                     Link { to: Route::Docs {}, "User Docs" }
+                    " - "
+                    Link { to: Route::Developers {}, "Developers" }
                     " - "
                     Link { to: Route::Privacy {}, "Privacy" }
                     " - "

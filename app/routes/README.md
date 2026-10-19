@@ -27,8 +27,30 @@ All blueprints register with `url_prefix="/_api"`. The waivers blueprint
 is the one exception, intentionally - the frontend links to
 `/<event>/waiver` directly.
 
-`/api/` (no underscore) is **reserved** for a hypothetical future
-public API. Never use it.
+`/api/` (no underscore) is the stable, public surface for third-party
+apps, documented in [`docs/developers.md`](../../docs/developers.md).
+Only add routes there deliberately: they're a contract. They
+authenticate with OAuth bearer tokens via
+`app.utils.oauth_server.require_bearer`, never with the session
+cookie, and send `Access-Control-Allow-Origin: *`. Bearer tokens are
+accepted nowhere else; `/_api/` stays session-only. The `oauth`
+blueprint hosts both its public `/api/oauth/...` endpoints and the
+SPA's `/_api/oauth/...` helpers, so it registers without a prefix.
+
+The public API itself is the [`api_v1/`](api_v1/__init__.py) package:
+one blueprint at `/api/v1`, one module per resource area. Its routes
+differ from `/_api/` ones in a few ways:
+
+- Pass `g.oauth_user` (and `g.oauth_token.user_type`) to services
+  explicitly; never read or set `current_user`.
+- Build responses with
+  [`app/serializers/api_v1_serializer.py`](../serializers/api_v1_serializer.py),
+  never the SPA serializers, and change shapes only by adding fields.
+- Errors are `{"error": "..."}` with no `success` key.
+- Show only what a signed-out website visitor sees, via the visibility
+  helpers in `api_v1/__init__.py` (`with_tournament`,
+  `can_view_schedule`, ...), unless a scope grants more.
+- Every request is logged on the `arctos.api` logger.
 
 ### Return JSON
 

@@ -41,6 +41,25 @@ and fill only the values you need.
   numeric database row ids; e.g. `alice:team-slug`.
 
 
+## Scoreboard overlay rendering
+
+The scoreboard overlay endpoint
+(`GET /_api/tournaments/<url>/matches/<match_id>/scoreboard-overlay`)
+renders the SPA's `/scoreboard-render` page in headless Chromium. See
+[DEPLOY.md](DEPLOY.md#scoreboard-overlay-rendering) for server setup.
+
+`ARCTOS_FRONTEND_URL`
+: Origin serving the SPA, as reachable from the backend host. Format:
+  absolute URL without a trailing slash; e.g. `https://arctos.example.org`
+  in production (the same public origin), or `http://127.0.0.1:8080` in
+  development. When unset the overlay endpoint returns 503.
+
+`ARCTOS_CHROMIUM_PATH`
+: Optional path to a system Chromium/Chrome executable; e.g.
+  `/usr/bin/chromium`. When unset, Playwright's bundled Chromium is used
+  (install it with `uv run playwright install chromium`).
+
+
 ## Google Oauth2 info
 
 go to google cloud console for these
@@ -55,6 +74,19 @@ Google OAuth callback URLs are derived from the incoming request host. If the
 same server is reachable on multiple public domains, add each domain's
 `/_api/auth/google/callback` URL to the authorized redirect URIs in Google
 Cloud Console.
+
+
+## Sign in with Arctos
+
+Arctos's own OAuth provider (see [For Developers](developers.md)) refuses
+requests that don't arrive over HTTPS. Production gets HTTPS from
+gunicorn's TLS (`just run`) or from a proxy that forwards to it over
+HTTPS. The reverse proxy must also forward `/api/` to gunicorn, like
+`/_api/`.
+
+`AUTHLIB_INSECURE_TRANSPORT`
+: Set to `1` to allow the OAuth endpoints over plain HTTP, e.g. with
+  `just dev`. Never set it in production.
 
 
 ## Youtube config

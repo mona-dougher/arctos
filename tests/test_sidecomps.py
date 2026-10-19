@@ -1935,3 +1935,99 @@ def test_completing_registration_sets_weapon(test_db, tournament):
 
     rows = SideCompService.standings(other_comp.id).unwrap()["tables"][0]["rows"]
     assert [(r["player_id"], r["wins"]) for r in rows] == [(p.id, 1)]
+
+
+def _make_pending_player(tournament_url):
+    """Return a player whose event registration is pending approval by a confirmed team."""
+    from models import Team, TeamRegistration
+
+    team = Team(id="requested_team", name="Requested Team", pw_hash="dummy_hash")
+    db.session.add(team)
+    db.session.flush()
+    db.session.add(
+        TeamRegistration(
+            event=tournament_url,
+            team=team.id,
+            pseudonym="Requested Team",
+            shortname="REQ",
+            status="CONFIRMED",
+            paid=True,
+        )
+    )
+    p = _make_player("pending_p", "Pending")
+    db.session.add(
+        PlayerRegistration(
+            event=tournament_url,
+            player=p.id,
+            team=team.id,
+            jersey_number="3",
+            jersey_name="Pendo",
+            status=RegistrationStatus.PENDING_TEAM_APPROVAL,
+            paid=True,
+        )
+    )
+    db.session.commit()
+    return p
+
+
+def test_pending_player_can_self_register_and_shows_unattached(test_db, tournament):
+    from app.services.sidecomp_service import SideCompService
+
+    p = _make_pending_player(tournament.url)
+    sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True, active=True)
+    db.session.add(sc)
+    db.session.commit()
+
+    reg = SideCompService.register_player(sc.id, player_id=p.id, weapon="LONG").unwrap()
+    SideCompService.log_result(sc.id, registration_id=reg.id, points=1, ref_user_id="ref").unwrap()
+
+    roster_row = SideCompService.enter_results_roster(sc.id).unwrap()["registrants"][0]
+    assert roster_row["jersey_name"] == "Pendo"
+    assert roster_row["team_id"] is None
+    assert roster_row["team_shortname"] == "merc"
+
+    standings_row = SideCompService.standings(sc.id).unwrap()["tables"][0]["rows"][0]
+    assert standings_row["player_id"] == p.id
+    assert standings_row["team_shortname"] == "merc"
+
+
+def test_to_can_register_pending_player_listed_as_unattached(app, client, tournament):
+    from app.services.sidecomp_service import SideCompService
+
+    with app.app_context():
+        to_user = _make_player("to_user", "TO User")
+        _make_to(tournament.url, to_user.id)
+        p = _make_pending_player(tournament.url)
+        pending_player_id = p.id
+        sc = SideComp(event=tournament.url, name="A", type="DUELING")
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+
+        SideCompService.register_player_as_to(
+            comp_id,
+            actor_user_id=to_user.id,
+            actor_user_type="player",
+            player_id=pending_player_id,
+            weapon="LONG",
+        ).unwrap()
+        login_as(client, to_user)
+
+    players = client.get(f"/_api/sidecomps/{comp_id}/eligible-players").get_json()["players"]
+    row = next(r for r in players if r["player_id"] == pending_player_id)
+    assert row["sidecomp_registered"] is True
+    assert row["team_id"] is None
+    assert row["team_shortname"] is None
+
+
+def test_route_detail_pending_player_can_register(app, client, tournament):
+    with app.app_context():
+        p = _make_pending_player(tournament.url)
+        sc = SideComp(event=tournament.url, name="A", type="DUELING", registration_open=True)
+        db.session.add(sc)
+        db.session.commit()
+        comp_id = sc.id
+        login_as(client, p)
+
+    payload = client.get(f"/_api/sidecomps/{comp_id}").get_json()
+    assert payload["viewer_can_register"] is True
