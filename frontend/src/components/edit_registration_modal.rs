@@ -31,6 +31,7 @@ impl EditRegistrationContext {
 pub fn EditRegistrationModal(
     context: EditRegistrationContext,
     user_type: String,
+    #[props(default = false)] historical: bool,
     on_close: EventHandler<()>,
     on_success: EventHandler<()>,
 ) -> Element {
@@ -75,6 +76,7 @@ pub fn EditRegistrationModal(
                         } else {
                             EditPlayerRegistrationContent {
                                 context: context.clone(),
+                                historical,
                                 on_close: on_close.clone(),
                                 on_success: on_success.clone(),
                             }
@@ -83,6 +85,7 @@ pub fn EditRegistrationModal(
                             DeregisterConfirmOverlay {
                                 context: context.clone(),
                                 is_team,
+                                historical,
                                 on_close: on_close.clone(),
                                 on_success: on_success.clone(),
                                 on_cancel: move |_| show_deregister_confirm.set(false),
@@ -94,7 +97,13 @@ pub fn EditRegistrationModal(
                             r#type: "button",
                             class: "btn btn-outline-danger",
                             onclick: move |_| show_deregister_confirm.set(true),
-                            if is_team { "Deregister Team" } else { "Deregister Player" }
+                            if historical {
+                                "Un-claim"
+                            } else if is_team {
+                                "Deregister Team"
+                            } else {
+                                "Deregister Player"
+                            }
                         }
                         button {
                             r#type: "submit",
@@ -113,6 +122,7 @@ pub fn EditRegistrationModal(
 fn DeregisterConfirmOverlay(
     context: EditRegistrationContext,
     is_team: bool,
+    historical: bool,
     on_close: EventHandler<()>,
     on_success: EventHandler<()>,
     on_cancel: EventHandler<()>,
@@ -130,7 +140,11 @@ fn DeregisterConfirmOverlay(
                 onclick: move |ev: Event<MouseData>| { ev.stop_propagation(); },
                 div { class: "card-body",
                     p { class: "mb-3",
-                        if is_team {
+                        if historical && is_team {
+                            "Un-claim this spot? The results stay, listed again as an unclaimed team, and your account is no longer linked to them."
+                        } else if historical {
+                            "Un-claim this spot? You will be removed from the roster."
+                        } else if is_team {
                             "Are you sure you want to deregister your team? Your team will be removed."
                         } else {
                             "Are you sure you want to deregister? You will be removed."
@@ -224,6 +238,7 @@ fn DeregisterConfirmOverlay(
 #[component]
 fn EditPlayerRegistrationContent(
     context: EditRegistrationContext,
+    historical: bool,
     on_close: EventHandler<()>,
     on_success: EventHandler<()>,
 ) -> Element {
@@ -374,6 +389,7 @@ fn EditPlayerRegistrationContent(
                         oninput: move |e| jersey_number.set(e.value())
                     }
                 }
+                if !historical {
                 div { class: "mb-3",
                     label { class: "form-label", "Team" }
                     select {
@@ -395,6 +411,7 @@ fn EditPlayerRegistrationContent(
                         br {}
                         "If you change teams, your new team must approve your request."
                     }
+                }
                 }
                 if waiver_required() {
                     div { class: "mb-3",

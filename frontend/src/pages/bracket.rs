@@ -1402,6 +1402,7 @@ pub fn Bracket(url: String) -> Element {
     let mut team_options_sig = use_signal(|| Vec::<TeamOption>::new());
     let mut tags_sig = use_signal(|| Vec::<TagSetupData>::new());
     let mut tournament_name_sig = use_signal(|| String::new());
+    let mut historical_sig = use_signal(|| false);
     let mut is_to_sig = use_signal(|| false);
     let mut interaction = use_signal(Interaction::default);
     // Hold-H hand tool: pointer motion pans without a button (trackpad-friendly).
@@ -1470,6 +1471,7 @@ pub fn Bracket(url: String) -> Element {
             team_options_sig.set(matches_resp.team_options.clone());
             tags_sig.set(matches_resp.tags.clone());
             tournament_name_sig.set(layout.tournament.name.clone());
+            historical_sig.set(layout.tournament.historical);
             is_to_sig.set(layout.is_to);
             legacy_brackets.set(layout.legacy_brackets.clone());
             bracket_published.set(layout.bracket_published || layout.tournament.bracket_published);
@@ -1623,6 +1625,7 @@ pub fn Bracket(url: String) -> Element {
                 let team_options = team_options_sig();
                 let tags = tags_sig();
                 let tournament_name = tournament_name_sig();
+                let historical = historical_sig();
                 let tournament_url = url.clone();
 
                 let matches_snap = local_matches();
@@ -2041,6 +2044,15 @@ pub fn Bracket(url: String) -> Element {
                         div { class: "row",
                             div { class: "col-12",
                                 h1 { "{tournament_name} - Bracket" }
+                                if historical {
+                                    p { class: "text-muted small mb-2",
+                                        "Wires follow the links entered with each match: "
+                                        code { "Semifinal 1 winner" }
+                                        " and "
+                                        code { "Semifinal 1 loser" }
+                                        ". Drag the matches to arrange the diagram. That does not change the matches."
+                                    }
+                                }
                                 div { class: "bracket-page-toolbar",
                                     Link {
                                         to: Route::TournamentHome { url: tournament_url.clone() },

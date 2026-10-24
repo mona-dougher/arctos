@@ -22,6 +22,7 @@ from app.models.penalty_type import PenaltyType
 from app.models.records import Injury, HeadRef
 from app.models.sidecomp import SideComp, SideCompEntryNumber, SideCompRegistration, SideCompResult
 from app.models.camera import Camera
+from app.models.historical import TeamClaimInvitation, TeamClaimRequest
 from app.models.oauth import OAuthAuthorizationCode, OAuthClient, OAuthToken
 from app.models.normalised import (
     CameraTimepoint,
@@ -62,6 +63,8 @@ __all__ = [
     "SideCompEntryNumber",
     "SideCompRegistration",
     "SideCompResult",
+    "TeamClaimInvitation",
+    "TeamClaimRequest",
     # Normalised join tables (added by the additive schema migration).
     "HeadRefAllowList",
     "MatchReferee",

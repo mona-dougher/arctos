@@ -7,7 +7,7 @@ pub fn CreateEvent() -> Element {
         div { class: "row justify-content-center",
             div { class: "col-lg-10",
                 div { class: "row g-4",
-                    div { class: "col-md-6",
+                    div { class: "col-md-4",
                         div { class: "card h-100",
                             div { class: "card-body d-flex flex-column",
                                 h5 { class: "card-title", "Tournament" }
@@ -22,7 +22,7 @@ pub fn CreateEvent() -> Element {
                             }
                         }
                     }
-                    div { class: "col-md-6",
+                    div { class: "col-md-4",
                         div { class: "card h-100",
                             div { class: "card-body d-flex flex-column",
                                 h5 { class: "card-title", "League" }
@@ -33,6 +33,24 @@ pub fn CreateEvent() -> Element {
                                     to: Route::NewLeague {},
                                     class: "btn btn-primary align-self-start",
                                     "Create league"
+                                }
+                            }
+                        }
+                    }
+                    div { class: "col-md-4",
+                        div { class: "card h-100",
+                            div { class: "card-body d-flex flex-column",
+                                h5 { class: "card-title",
+                                    i { class: "fas fa-history me-2 text-secondary" }
+                                    "Past tournament"
+                                }
+                                p { class: "card-text flex-grow-1 text-muted",
+                                    "Record the results of a tournament that already happened: who attended, the matches, and the scores. Teams can claim their results afterwards."
+                                }
+                                Link {
+                                    to: Route::NewHistoricalTournament {},
+                                    class: "btn btn-outline-primary align-self-start",
+                                    "Record past tournament"
                                 }
                             }
                         }

@@ -2,9 +2,9 @@ use crate::Route;
 use crate::api;
 use crate::components::{
     EditRegistrationContext, EditRegistrationModal, EventHeader, LeagueRegistrationButtons,
-    PompfenIcon,
+    PendingInvitations, PompfenIcon,
 };
-use crate::types::{ToEntry, User};
+use crate::types::{TeamWithCount, ToEntry, User};
 use dioxus::prelude::*;
 
 
@@ -107,87 +107,128 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                 badge_name: d.tournament.league.as_ref().map(|l| l.name.clone()),
             }
 
+            if d.tournament.historical {
+                div { class: "alert alert-secondary d-flex align-items-center gap-2",
+                    i { class: "fas fa-history" }
+                    div {
+                        "Historical record: these results were entered after the tournament took place. "
+                        "Unclaimed teams are not linked to an Arctos account yet. Claim a team or say you played here with the buttons below, or contact the organizers."
+                    }
+                }
+                PendingInvitations {
+                    tournament_url: url.clone(),
+                    on_respond: move |_| refresh.set(refresh() + 1),
+                }
+            }
+
             div { class: "row mb-3",
                 div { class: "col-12 d-flex flex-wrap gap-2",
-                    if d.tournament.schedule_published {
-                        Link { to: Route::Schedule { url: url.clone(), view: String::new(), team: String::new(), field: String::new() }, class: "btn btn-primary", "Schedule" }
-                    } else {
-                        Link { to: Route::Schedule { url: url.clone(), view: String::new(), team: String::new(), field: String::new() }, class: "btn btn-outline-secondary", "Schedule (Not Published)" }
-                    }
-                    Link { to: Route::Results { url: url.clone() }, class: "btn btn-outline-primary", "Results" }
-                    if d.tournament.bracket_published {
-                        Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-primary", "Bracket" }
-                    } else if is_current_user_to(me_res.read().as_ref(), &d.to_entries) {
-                        Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-secondary", "Bracket (Not Published)" }
-                    }
-                    if let Some(ref l) = d.tournament.league {
-                        LeagueRegistrationButtons {
-                            league_url: l.league_url.clone(),
-                            registration_open: l.registration_open,
-                            team_registration_open: Some(l.team_registration_open),
-                            player_registration_open: Some(l.player_registration_open),
-                            current_user: me_res.read().as_ref().cloned(),
-                            is_team_registered: d.is_current_team_registered,
-                            is_player_registered: d.is_current_player_registered,
-                            use_edit_modal: true,
-                            on_edit_registration: move |_| show_league_edit_modal.set(true),
-                            register_label: String::from("Register (league)"),
+                    if d.tournament.historical {
+                        Link { to: Route::Results { url: url.clone() }, class: "btn btn-primary", "Results" }
+                        if d.tournament.bracket_published {
+                            Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-primary", "Bracket" }
+                        } else if is_current_user_to(me_res.read().as_ref(), &d.to_entries) {
+                            Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-secondary", "Bracket (Not Published)" }
+                        }
+                        if let Some(current_user) = me_res.read().as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+                                HistoricalParticipation {
+                                url: url.clone(),
+                                teams: d.teams_with_counts.clone(),
+                                current_user: current_user.clone(),
+                                team_registered: d.is_current_team_registered,
+                                player_registered: d.is_current_player_registered,
+                                lists_revision: refresh,
+                                on_edit: move |_| {
+                                    if current_user.user_type == "team" {
+                                        show_edit_team_modal.set(true);
+                                    } else {
+                                        show_edit_player_modal.set(true);
+                                    }
+                                },
+                                on_changed: move |_| refresh.set(refresh() + 1),
+                            }
                         }
                     } else {
-                        if let Some(current_user) = me_res.read().as_ref().and_then(|r| r.as_ref().ok()) {
-                            if current_user.user_type == "team" {
-                                if d.is_current_team_registered {
-                                    a { href: "{backend}/{url}/invitations", class: "btn btn-outline-secondary", "Manage Roster" }
-                                    button {
-                                        class: "btn btn-outline-secondary",
-                                        onclick: move |_| show_edit_team_modal.set(true),
-                                        "Edit Registration"
+                        if d.tournament.schedule_published {
+                            Link { to: Route::Schedule { url: url.clone(), view: String::new(), team: String::new(), field: String::new() }, class: "btn btn-primary", "Schedule" }
+                        } else {
+                            Link { to: Route::Schedule { url: url.clone(), view: String::new(), team: String::new(), field: String::new() }, class: "btn btn-outline-secondary", "Schedule (Not Published)" }
+                        }
+                        Link { to: Route::Results { url: url.clone() }, class: "btn btn-outline-primary", "Results" }
+                        if d.tournament.bracket_published {
+                            Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-primary", "Bracket" }
+                        } else if is_current_user_to(me_res.read().as_ref(), &d.to_entries) {
+                            Link { to: Route::Bracket { url: url.clone() }, class: "btn btn-outline-secondary", "Bracket (Not Published)" }
+                        }
+                        if let Some(ref l) = d.tournament.league {
+                            LeagueRegistrationButtons {
+                                league_url: l.league_url.clone(),
+                                registration_open: l.registration_open,
+                                team_registration_open: Some(l.team_registration_open),
+                                player_registration_open: Some(l.player_registration_open),
+                                current_user: me_res.read().as_ref().cloned(),
+                                is_team_registered: d.is_current_team_registered,
+                                is_player_registered: d.is_current_player_registered,
+                                use_edit_modal: true,
+                                on_edit_registration: move |_| show_league_edit_modal.set(true),
+                                register_label: String::from("Register (league)"),
+                            }
+                        } else {
+                            if let Some(current_user) = me_res.read().as_ref().and_then(|r| r.as_ref().ok()) {
+                                if current_user.user_type == "team" {
+                                    if d.is_current_team_registered {
+                                        a { href: "{backend}/{url}/invitations", class: "btn btn-outline-secondary", "Manage Roster" }
+                                        button {
+                                            class: "btn btn-outline-secondary",
+                                            onclick: move |_| show_edit_team_modal.set(true),
+                                            "Edit Registration"
+                                        }
+                                    } else if d.tournament.team_registration_open {
+                                        Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                    } else {
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-secondary disabled",
+                                            disabled: true,
+                                            "Team registration closed"
+                                        }
                                     }
-                                } else if d.tournament.team_registration_open {
-                                    Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                } else if current_user.user_type == "player" {
+                                    if d.is_current_player_registered {
+                                        button {
+                                            class: "btn btn-outline-secondary",
+                                            onclick: move |_| show_edit_player_modal.set(true),
+                                            "Edit Registration"
+                                        }
+                                    } else if d.tournament.player_registration_open {
+                                        Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                    } else {
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-secondary disabled",
+                                            disabled: true,
+                                            "Player registration closed"
+                                        }
+                                    }
                                 } else {
-                                    button {
-                                        r#type: "button",
-                                        class: "btn btn-secondary disabled",
-                                        disabled: true,
-                                        "Team registration closed"
-                                    }
-                                }
-                            } else if current_user.user_type == "player" {
-                                if d.is_current_player_registered {
-                                    button {
-                                        class: "btn btn-outline-secondary",
-                                        onclick: move |_| show_edit_player_modal.set(true),
-                                        "Edit Registration"
-                                    }
-                                } else if d.tournament.player_registration_open {
-                                    Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
-                                } else {
-                                    button {
-                                        r#type: "button",
-                                        class: "btn btn-secondary disabled",
-                                        disabled: true,
-                                        "Player registration closed"
+                                    if d.tournament.team_registration_open || d.tournament.player_registration_open {
+                                        Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
+                                    } else {
+                                        button {
+                                            r#type: "button",
+                                            class: "btn btn-secondary disabled",
+                                            disabled: true,
+                                            "Registration closed"
+                                        }
                                     }
                                 }
                             } else {
-                                if d.tournament.team_registration_open || d.tournament.player_registration_open {
-                                    Link { to: Route::TournamentRegister { url: url.clone() }, class: "btn btn-success", "Register" }
-                                } else {
-                                    button {
-                                        r#type: "button",
-                                        class: "btn btn-secondary disabled",
-                                        disabled: true,
-                                        "Registration closed"
-                                    }
+                                button {
+                                    r#type: "button",
+                                    class: "btn btn-secondary disabled",
+                                    disabled: true,
+                                    "Sign in to register"
                                 }
-                            }
-                        } else {
-                            button {
-                                r#type: "button",
-                                class: "btn btn-secondary disabled",
-                                disabled: true,
-                                "Sign in to register"
                             }
                         }
                     }
@@ -217,12 +258,14 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                                         "Tournament Information"
                                     }
                                 }
-                                li { class: "nav-item",
-                                    a {
-                                        class: if active_info_tab == "sidecomps" { "nav-link active" } else { "nav-link" },
-                                        href: "#",
-                                        onclick: move |evt| { evt.prevent_default(); info_tab.set(Some("sidecomps".to_string())); },
-                                        "Side Competitions"
+                                if !d.tournament.historical {
+                                    li { class: "nav-item",
+                                        a {
+                                            class: if active_info_tab == "sidecomps" { "nav-link active" } else { "nav-link" },
+                                            href: "#",
+                                            onclick: move |evt| { evt.prevent_default(); info_tab.set(Some("sidecomps".to_string())); },
+                                            "Side Competitions"
+                                        }
                                     }
                                 }
                             }
@@ -406,12 +449,16 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                                             div { class: "card-header", h5 { class: "mb-0", "Admin" } }
                                             div { class: "card-body",
                                                 div { class: "d-grid gap-2",
-                                                    Link { to: Route::TournamentSettings { url: url.clone() }, class: "btn btn-outline-secondary", "Settings" }
-                                                    Link { to: Route::ScheduleEdit { url: url.clone() }, class: "btn btn-outline-primary", "Edit Schedule" }
-                                                    if let Some(ref l) = d.tournament.league {
-                                                        Link { to: Route::LeagueManage { league_url: l.league_url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
+                                                    if d.tournament.historical {
+                                                        Link { to: Route::HistoricalRecords { url: url.clone() }, class: "btn btn-primary", "Edit Records" }
                                                     } else {
-                                                        Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
+                                                        Link { to: Route::TournamentSettings { url: url.clone() }, class: "btn btn-outline-secondary", "Settings" }
+                                                        Link { to: Route::ScheduleEdit { url: url.clone() }, class: "btn btn-outline-primary", "Edit Schedule" }
+                                                        if let Some(ref l) = d.tournament.league {
+                                                            Link { to: Route::LeagueManage { league_url: l.league_url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
+                                                        } else {
+                                                            Link { to: Route::Manage { url: url.clone() }, class: "btn btn-outline-warning", "Registration Management" }
+                                                        }
                                                     }
                                                     Link {
                                                         to: Route::ManageFootage { url: url.clone() },
@@ -440,7 +487,11 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                 div { class: "row mt-4",
                     div { class: "col-12",
                         div { class: "card",
-                            div { class: "card-header", h5 { class: "mb-0", "Registered Teams ({teams_count})" } }
+                            div { class: "card-header",
+                                h5 { class: "mb-0",
+                                    if d.tournament.historical { "Teams ({teams_count})" } else { "Registered Teams ({teams_count})" }
+                                }
+                            }
                             div { class: "card-body",
                                 div { class: "table-responsive",
                                     table { class: "table table-striped",
@@ -448,7 +499,9 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                                             tr {
                                                 th { "Team Name" }
                                                 th { "Players" }
-                                                th { "Registration Date" }
+                                                if !d.tournament.historical {
+                                                    th { "Registration Date" }
+                                                }
                                             }
                                         }
                                         tbody {
@@ -469,6 +522,9 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                                                                 Link { to: Route::TeamProfilePage { id: team.team_id.clone() }, class: "text-decoration-none",
                                                                     strong { "{team.pseudonym.as_deref().unwrap_or(&team.team_name)}" }
                                                                 }
+                                                                if team.placeholder {
+                                                                    span { class: "badge bg-light text-dark border ms-2", "Unclaimed" }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -478,7 +534,9 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                                                             span { " / {max}" }
                                                         }
                                                     }
-                                                    td { "{team.registered_at.as_deref().unwrap_or(\"-\")}" }
+                                                    if !d.tournament.historical {
+                                                        td { "{team.registered_at.as_deref().unwrap_or(\"-\")}" }
+                                                    }
                                                 }
                                             }
                                         }
@@ -555,6 +613,7 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                     EditRegistrationModal {
                         context: EditRegistrationContext::Tournament { tournament_url: url.clone() },
                         user_type: me.user_type.clone(),
+                        historical: d.tournament.historical,
                         on_close: move |_| show_edit_player_modal.set(false),
                         on_success: move |_| {
                             show_edit_player_modal.set(false);
@@ -569,6 +628,7 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
                     EditRegistrationModal {
                         context: EditRegistrationContext::Tournament { tournament_url: url.clone() },
                         user_type: me.user_type.clone(),
+                        historical: d.tournament.historical,
                         on_close: move |_| show_edit_team_modal.set(false),
                         on_success: move |_| {
                             show_edit_team_modal.set(false);
@@ -675,6 +735,252 @@ fn TournamentHomeContent(url: String, initial_tab: Option<String>) -> Element {
             p { class: "text-danger", "{e}" }
         } else {
             p { class: "text-muted", "Loading…" }
+        }
+    }
+}
+
+#[component]
+fn HistoricalParticipation(
+    url: String,
+    teams: Vec<TeamWithCount>,
+    current_user: User,
+    team_registered: bool,
+    player_registered: bool,
+    on_edit: EventHandler<()>,
+    on_changed: EventHandler<()>,
+    lists_revision: Signal<u32>,
+) -> Element {
+    let mut refresh = use_signal(|| 0u32);
+    let mut error = use_signal(|| None::<String>);
+    let mut show_claim = use_signal(|| false);
+    let mut show_played = use_signal(|| false);
+    let mut chosen_team = use_signal(String::new);
+    let mut jersey_name = use_signal(String::new);
+    let mut jersey_number = use_signal(String::new);
+    let url_for_invites = url.clone();
+    let invitations = use_resource(move || {
+        let _ = refresh();
+        let _ = lists_revision();
+        let tournament_url = url_for_invites.clone();
+        async move { api::my_invitations(Some(&tournament_url)).await }
+    });
+    let data = invitations.read().as_ref().and_then(|result| result.as_ref().ok()).cloned();
+    let outgoing_team = data.as_ref().and_then(|invitations| invitations.outgoing_team_requests.first().cloned());
+    let outgoing_player = data.as_ref().and_then(|invitations| invitations.outgoing_roster_requests.first().cloned());
+    let placeholders: Vec<TeamWithCount> = teams.iter().filter(|team| team.placeholder).cloned().collect();
+    let first_placeholder = placeholders.first().map(|team| team.team_id.clone());
+    let first_team = teams.first().map(|team| team.team_id.clone());
+    let url_for_claim = url.clone();
+    let url_for_roster_request = url.clone();
+    let is_team = current_user.user_type == "team";
+    let is_player = current_user.user_type == "player";
+
+    let url_for_withdraw_team = url.clone();
+    let withdraw_team = move |_| {
+        let tournament_url = url_for_withdraw_team.clone();
+        let on_changed = on_changed;
+        spawn(async move {
+            match api::historical_withdraw_claim_request(&tournament_url).await {
+                Ok(()) => {
+                    error.set(None);
+                    refresh.set(refresh() + 1);
+                    on_changed.call(());
+                }
+                Err(message) => error.set(Some(message)),
+            }
+        });
+    };
+    let url_for_withdraw_player = url.clone();
+    let withdraw_player = move |_| {
+        let tournament_url = url_for_withdraw_player.clone();
+        let on_changed = on_changed;
+        spawn(async move {
+            match api::historical_withdraw_roster_request(&tournament_url).await {
+                Ok(()) => {
+                    error.set(None);
+                    refresh.set(refresh() + 1);
+                    on_changed.call(());
+                }
+                Err(message) => error.set(Some(message)),
+            }
+        });
+    };
+
+    rsx! {
+        if let Some(message) = error() {
+            div { class: "alert alert-danger py-1 px-2 mb-0", "{message}" }
+        }
+        if is_team {
+            if team_registered {
+                Link {
+                    to: Route::HistoricalRoster { url: url.clone(), team_id: current_user.id.clone() },
+                    class: "btn btn-outline-secondary",
+                    "Manage Roster"
+                }
+                button { class: "btn btn-outline-secondary", onclick: move |_| on_edit.call(()), "Edit Registration" }
+            } else if let Some(request) = outgoing_team {
+                span { class: "align-self-center",
+                    "Waiting for the organizers to approve your claim of {request.placeholder_name}."
+                }
+                button { class: "btn btn-outline-secondary", onclick: withdraw_team, "Withdraw request" }
+            } else {
+                button {
+                    class: "btn btn-success",
+                    disabled: placeholders.is_empty(),
+                    title: if placeholders.is_empty() { "Every team is already claimed. Contact the organizers if one is missing." } else { "" },
+                    onclick: move |_| {
+                        if chosen_team().is_empty() {
+                            if let Some(team_id) = first_placeholder.clone() {
+                                chosen_team.set(team_id);
+                            }
+                        }
+                        show_claim.set(true);
+                    },
+                    "Claim a team"
+                }
+            }
+        } else if is_player {
+            if player_registered {
+                button { class: "btn btn-outline-secondary", onclick: move |_| on_edit.call(()), "Edit Registration" }
+            } else if let Some(request) = outgoing_player {
+                span { class: "align-self-center",
+                    "Waiting for approval to join {request.team_name}."
+                }
+                button { class: "btn btn-outline-secondary", onclick: withdraw_player, "Withdraw request" }
+            } else {
+                button {
+                    class: "btn btn-success",
+                    disabled: teams.is_empty(),
+                    onclick: move |_| {
+                        if chosen_team().is_empty() {
+                            if let Some(team_id) = first_team.clone() {
+                                chosen_team.set(team_id);
+                            }
+                        }
+                        show_played.set(true);
+                    },
+                    "I played here"
+                }
+            }
+        }
+
+        if show_claim() {
+            div {
+                class: "modal show d-block",
+                style: "background: rgba(0,0,0,0.5);",
+                onclick: move |_| show_claim.set(false),
+                div {
+                    class: "modal-dialog modal-dialog-centered",
+                    onclick: move |ev: Event<MouseData>| ev.stop_propagation(),
+                    div { class: "modal-content",
+                        div { class: "modal-header",
+                            h5 { class: "modal-title", "Claim a team" }
+                            button { class: "btn-close", onclick: move |_| show_claim.set(false) }
+                        }
+                        div { class: "modal-body",
+                            p { class: "text-muted", "Pick the team you were. An organizer approves the claim." }
+                            select {
+                                class: "form-select",
+                                value: "{chosen_team}",
+                                onchange: move |ev| chosen_team.set(ev.value()),
+                                for team in placeholders.iter() {
+                                    option { value: "{team.team_id}", "{team.pseudonym.as_deref().unwrap_or(&team.team_name)}" }
+                                }
+                            }
+                        }
+                        div { class: "modal-footer",
+                            button { class: "btn btn-secondary", onclick: move |_| show_claim.set(false), "Cancel" }
+                            button {
+                                class: "btn btn-primary",
+                                onclick: move |_| {
+                                    let tournament_url = url_for_claim.clone();
+                                    let placeholder_team_id = chosen_team();
+                                    let on_changed = on_changed;
+                                    spawn(async move {
+                                        match api::historical_request_claim(&tournament_url, &placeholder_team_id).await {
+                                            Ok(()) => {
+                                                error.set(None);
+                                                show_claim.set(false);
+                                                refresh.set(refresh() + 1);
+                                                on_changed.call(());
+                                            }
+                                            Err(message) => error.set(Some(message)),
+                                        }
+                                    });
+                                },
+                                "Request claim"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if show_played() {
+            div {
+                class: "modal show d-block",
+                style: "background: rgba(0,0,0,0.5);",
+                onclick: move |_| show_played.set(false),
+                div {
+                    class: "modal-dialog modal-dialog-centered",
+                    onclick: move |ev: Event<MouseData>| ev.stop_propagation(),
+                    div { class: "modal-content",
+                        div { class: "modal-header",
+                            h5 { class: "modal-title", "I played here" }
+                            button { class: "btn-close", onclick: move |_| show_played.set(false) }
+                        }
+                        div { class: "modal-body",
+                            p { class: "text-muted",
+                                "Pick your team. The organizers approve it, and so can the team once that team has claimed its spot."
+                            }
+                            select {
+                                class: "form-select mb-2",
+                                value: "{chosen_team}",
+                                onchange: move |ev| chosen_team.set(ev.value()),
+                                for team in teams.iter() {
+                                    option { value: "{team.team_id}", "{team.pseudonym.as_deref().unwrap_or(&team.team_name)}" }
+                                }
+                            }
+                            input {
+                                class: "form-control mb-2",
+                                placeholder: "Jersey name",
+                                value: "{jersey_name}",
+                                oninput: move |ev| jersey_name.set(ev.value()),
+                            }
+                            input {
+                                class: "form-control",
+                                placeholder: "Jersey number",
+                                value: "{jersey_number}",
+                                oninput: move |ev| jersey_number.set(ev.value()),
+                            }
+                        }
+                        div { class: "modal-footer",
+                            button { class: "btn btn-secondary", onclick: move |_| show_played.set(false), "Cancel" }
+                            button {
+                                class: "btn btn-primary",
+                                onclick: move |_| {
+                                    let tournament_url = url_for_roster_request.clone();
+                                    let team_id = chosen_team();
+                                    let name = jersey_name();
+                                    let number = jersey_number();
+                                    let on_changed = on_changed;
+                                    spawn(async move {
+                                        match api::historical_request_roster(&tournament_url, &team_id, &name, &number).await {
+                                            Ok(()) => {
+                                                error.set(None);
+                                                show_played.set(false);
+                                                refresh.set(refresh() + 1);
+                                                on_changed.call(());
+                                            }
+                                            Err(message) => error.set(Some(message)),
+                                        }
+                                    });
+                                },
+                                "Request to join"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

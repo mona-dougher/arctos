@@ -13,6 +13,7 @@ fn RegistrationRow(
     is_expanded: bool,
     on_toggle: EventHandler<()>,
     is_own_team: bool,
+    team_id: String,
     backend: String,
     players_cache: Signal<PlayersCache>,
 ) -> Element {
@@ -35,6 +36,11 @@ fn RegistrationRow(
                     Link { to: Route::LeagueHome { league_url: league_url.clone() }, "League: {league_url}" }
                 } else {
                     Link { to: Route::TournamentHome { url: event_key.clone() }, "{event_key}" }
+                    if registration.historical {
+                        span { class: "badge bg-secondary ms-2", title: "Historical tournament",
+                            i { class: "fas fa-history" }
+                        }
+                    }
                 }
             }
             td { strong { "{registration.pseudonym.as_deref().unwrap_or(\"-\")}" } }
@@ -55,7 +61,9 @@ fn RegistrationRow(
                 }
             }
             td {
-                if registration.paid {
+                if registration.historical {
+                    span { class: "text-muted", "-" }
+                } else if registration.paid {
                     span { class: "badge bg-success", "Paid" }
                     if registration.amount_paid > 0.0 {
                         { let amt = format!("${:.2}", registration.amount_paid); rsx! { small { class: "text-muted ms-1", "{amt}" } } }
@@ -70,6 +78,12 @@ fn RegistrationRow(
                     if is_league {
                         Link {
                             to: Route::LeagueInvitations { league_url: league_url.clone() },
+                            class: "btn btn-sm btn-outline-primary",
+                            "Manage Roster"
+                        }
+                    } else if registration.historical {
+                        Link {
+                            to: Route::HistoricalRoster { url: event_key.clone(), team_id: team_id.clone() },
                             class: "btn btn-sm btn-outline-primary",
                             "Manage Roster"
                         }
@@ -240,6 +254,14 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                             li { class: "breadcrumb-item active", "{d.team.name}" }
                         }
                     }
+                    if let Some(event) = &d.team.placeholder_event {
+                        div { class: "alert alert-secondary",
+                            i { class: "fas fa-history me-2" }
+                            "This team is listed in the historical tournament "
+                            Link { to: Route::TournamentHome { url: event.clone() }, "{event}" }
+                            " but hasn't been claimed by a team account yet."
+                        }
+                    }
                 }
             }
 
@@ -331,6 +353,7 @@ pub fn TeamProfile(id: Signal<String>) -> Element {
                                                                 expanded_event.set(if is_expanded { None } else { Some(ev_for_toggle.clone()) });
                                                             },
                                                             is_own_team: is_own,
+                                                            team_id: d.team.id.clone(),
                                                             backend: backend.clone(),
                                                             players_cache,
                                                         }

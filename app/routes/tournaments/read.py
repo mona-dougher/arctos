@@ -426,6 +426,7 @@ def tournament_detail(tournament_url):
                 "player_count": counts_by_team.get(team_reg.team, 0),
                 "registered_at": dt_iso(getattr(team_reg, "registered_at", None)),
                 "profile_photo": team.profile_photo if team else None,
+                "placeholder": bool(team and team.placeholder_event),
             }
         )
     unattached_prs = list(

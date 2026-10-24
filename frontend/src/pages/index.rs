@@ -1,4 +1,5 @@
 use crate::api;
+use crate::components::PendingInvitations;
 use crate::types::{Tournament, UserRegStatus};
 use crate::Route;
 use chrono::{Local, NaiveDate};
@@ -58,6 +59,7 @@ pub fn Index() -> Element {
     rsx! {
         div { class: "row",
             div { class: "col-12",
+                PendingInvitations {}
                 if let Some(Ok(data)) = val.read().as_ref() {
                     {
                         let (upcoming, past) = split_upcoming_past(&data.tournaments);
@@ -123,13 +125,25 @@ fn TournamentCard(
     user_reg_status: Option<UserRegStatus>,
 ) -> Element {
     let max_teams = tournament.n_max_teams;
+    let card_class = if tournament.historical {
+        "card tournament-card text-decoration-none position-relative bg-light border-secondary-subtle"
+    } else {
+        "card tournament-card text-decoration-none position-relative"
+    };
     rsx! {
         div { key: "{tournament.url}", class: "col-md-6 col-lg-4 mb-3",
             Link {
                 to: Route::TournamentHome { url: tournament.url.clone() },
-                class: "card tournament-card text-decoration-none position-relative",
+                class: card_class,
                 style: "display: block; transition: box-shadow 0.2s ease, transform 0.2s ease;",
-                if let Some(ref league) = tournament.league {
+                if tournament.historical {
+                    span {
+                        class: "position-absolute top-0 end-0 m-2 badge bg-secondary",
+                        title: "Results recorded after the tournament took place",
+                        i { class: "fas fa-history me-1" }
+                        "Historical"
+                    }
+                } else if let Some(ref league) = tournament.league {
                     Link {
                         to: Route::LeagueHome { league_url: league.league_url.clone() },
                         class: "position-absolute top-0 end-0 m-2 badge bg-secondary text-decoration-none",
@@ -148,7 +162,9 @@ fn TournamentCard(
                             "📍 {tournament.location.as_deref().unwrap_or(\"TBA\")}"
                         }
                         br {}
-                        if let Some(max) = max_teams {
+                        if tournament.historical {
+                            small { class: "text-muted", "{team_count} teams" }
+                        } else if let Some(max) = max_teams {
                             small { class: "text-muted",
                                 "{team_count}/{max} teams registered"
                             }
@@ -157,7 +173,7 @@ fn TournamentCard(
                                 "{team_count} teams registered"
                             }
                         }
-                        if let Some(urs) = user_reg_status {
+                        if let Some(urs) = user_reg_status.filter(|_| !tournament.historical) {
                             br {}
                             UserRegBadges { urs: urs }
                         }

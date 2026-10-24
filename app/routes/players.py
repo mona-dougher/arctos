@@ -20,9 +20,10 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user, login_required
 from sqlalchemy.orm import joinedload
 
+from app.domain.enums import RegistrationStatus
 from app.serializers.registration_serializer import player_reg_waiver_api
 from app.utils.datetime_helpers import dt_iso
-from app.utils.helpers import can_head_ref_match, get_registrable_config
+from app.utils.helpers import can_head_ref_match, get_registrable_config, unpublished_historical_urls
 from app.utils.profile_photo_helpers import (
     profile_photo_upload_dir,
     safe_profile_photo_filename,
@@ -93,6 +94,24 @@ def player_profile(player_id):
     if not player:
         return jsonify({"error": "Not found"}), 404
     regs = PlayerRegistration.query.filter_by(player=player_id).all()
+    event_urls_for_visibility = [r.event for r in regs if r.event]
+    historical_events = (
+        {
+            tournament.url
+            for tournament in Tournament.query.filter(
+                Tournament.url.in_(event_urls_for_visibility), Tournament.historical.is_(True)
+            ).all()
+        }
+        if event_urls_for_visibility
+        else set()
+    )
+    hidden_events = unpublished_historical_urls(event_urls_for_visibility)
+    regs = [
+        r
+        for r in regs
+        if r.event not in hidden_events
+        and not (r.event in historical_events and r.status != RegistrationStatus.CONFIRMED)
+    ]
     can_see_private = current_user.is_authenticated and current_user.id == player_id
     injuries_query = Injury.query.filter_by(player=player_id)
     if not can_see_private:
@@ -130,6 +149,7 @@ def player_profile(player_id):
     matches_by_id = (
         {m.uuid: m for m in Match.query.filter(Match.uuid.in_(note_match_ids)).all()} if note_match_ids else {}
     )
+    hidden_note_events = unpublished_historical_urls(m.event for m in matches_by_id.values())
 
     penalty_type_ids = {
         getattr(n, "penalty_type_id", None) for n in player_notes if getattr(n, "penalty_type_id", None)
@@ -145,6 +165,8 @@ def player_profile(player_id):
         for note in player_notes:
             idx = "-"
             match_obj = matches_by_id.get(note.match) if note.match else None
+            if match_obj and match_obj.event in hidden_note_events:
+                continue
             if match_obj and note.point_id:
                 match_id = match_obj.uuid
                 if match_id not in match_to_points:
