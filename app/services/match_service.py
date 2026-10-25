@@ -128,8 +128,10 @@ class MatchService:
             field_limit = int(field_limit) if field_limit is not None else None
         except (TypeError, ValueError):
             field_limit = None
-        if field_limit is not None and field_limit > 0 and (
-            len(team1_players) > field_limit or len(team2_players) > field_limit
+        if (
+            field_limit is not None
+            and field_limit > 0
+            and (len(team1_players) > field_limit or len(team2_players) > field_limit)
         ):
             return Err(ValidationError("Too many players selected for a team"))
 
