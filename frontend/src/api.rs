@@ -3445,16 +3445,17 @@ pub async fn sidecomp_eligible_players(comp_id: i32) -> Result<EligiblePlayersRe
     response_json(r).await
 }
 
-pub async fn sidecomp_enter_results_roster(comp_id: i32) -> Result<SideCompEnterRoster, String> {
+pub async fn sidecomp_enter_results_roster(
+    comp_id: i32,
+    entry_number_query: Option<&str>,
+) -> Result<SideCompEnterRoster, String> {
+    let mut url = format!("{}/_api/sidecomps/{}/enter-results-roster", base(), comp_id);
+    if let Some(query) = entry_number_query.map(str::trim).filter(|query| !query.is_empty()) {
+        url.push_str("?q=");
+        url.push_str(&urlencoding::encode(query));
+    }
     let c = client();
-    let r = with_credentials(c.get(format!(
-        "{}/_api/sidecomps/{}/enter-results-roster",
-        base(),
-        comp_id
-    )))
-    .send()
-    .await
-    .map_err(|e| e.to_string())?;
+    let r = with_credentials(c.get(url)).send().await.map_err(|e| e.to_string())?;
     response_json(r).await
 }
 

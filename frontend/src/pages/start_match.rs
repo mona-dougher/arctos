@@ -3,8 +3,12 @@ use crate::components::PenaltyDisplay;
 use crate::types::StartMatchPlayer;
 use crate::Route;
 use dioxus::prelude::*;
-use std::collections::HashSet;
 use serde_json::Value;
+use std::collections::HashSet;
+
+fn positive_team_size_limit(limit: Option<u32>) -> Option<u32> {
+    limit.filter(|value| *value > 0)
+}
 
 #[component]
 pub fn StartMatch(url: String, match_id: String) -> Element {
@@ -65,6 +69,11 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
             let team2_has_unpaid = team2_selected().iter().any(|id| {
                 d.all_players.iter().find(|p| &p.id == id).map(|p| !p.paid).unwrap_or(false)
             });
+            let field_limit = positive_team_size_limit(d.tournament.max_team_size_field);
+            let team1_count = team1_selected().len();
+            let team2_count = team2_selected().len();
+            let team1_over_field_limit = field_limit.is_some_and(|limit| team1_count > limit as usize);
+            let team2_over_field_limit = field_limit.is_some_and(|limit| team2_count > limit as usize);
             // Use route param for POST so backend receives the same id we navigated to
             let route_match_id_for_submit = match_id.clone();
             let all_players_team1 = d.all_players.clone();
@@ -198,7 +207,11 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                             }
                                             div { class: "mb-3",
                                                 label { class: "form-label",
-                                                    "Select Players (max {d.tournament.max_team_size_field.unwrap_or(0)}):"
+                                                    if let Some(limit) = field_limit {
+                                                        "Select Players (max {limit}):"
+                                                    } else {
+                                                        "Select Players:"
+                                                    }
                                                 }
                                                 div {
                                                     class: "border p-3",
@@ -225,12 +238,16 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                                     }
                                                 }
                                                 p {
-                                                    class: if team1_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize {
+                                                    class: if team1_over_field_limit {
                                                         "small text-danger mb-0 mt-1"
                                                     } else {
                                                         "small text-muted mb-0 mt-1"
                                                     },
-                                                    "{team1_selected().len()}/{d.tournament.max_team_size_field.unwrap_or(0)} players selected"
+                                                    if let Some(limit) = field_limit {
+                                                        "{team1_count}/{limit} players selected"
+                                                    } else {
+                                                        "{team1_count} players selected"
+                                                    }
                                                 }
                                                 if team1_has_unpaid {
                                                     p { class: "small text-danger mb-0 mt-1", "Unpaid players selected" }
@@ -318,7 +335,11 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                             }
                                             div { class: "mb-3",
                                                 label { class: "form-label",
-                                                    "Select Players (max {d.tournament.max_team_size_field.unwrap_or(0)}):"
+                                                    if let Some(limit) = field_limit {
+                                                        "Select Players (max {limit}):"
+                                                    } else {
+                                                        "Select Players:"
+                                                    }
                                                 }
                                                 div {
                                                     class: "border p-3",
@@ -345,12 +366,16 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                                     }
                                                 }
                                                 p {
-                                                    class: if team2_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize {
+                                                    class: if team2_over_field_limit {
                                                         "small text-danger mb-0 mt-1"
                                                     } else {
                                                         "small text-muted mb-0 mt-1"
                                                     },
-                                                    "{team2_selected().len()}/{d.tournament.max_team_size_field.unwrap_or(0)} players selected"
+                                                    if let Some(limit) = field_limit {
+                                                        "{team2_count}/{limit} players selected"
+                                                    } else {
+                                                        "{team2_count} players selected"
+                                                    }
                                                 }
                                                 if team2_has_unpaid {
                                                     p { class: "small text-danger mb-0 mt-1", "Unpaid players selected" }
@@ -423,8 +448,8 @@ pub fn StartMatch(url: String, match_id: String) -> Element {
                                         button {
                                             r#type: "submit",
                                             class: "btn btn-success btn-lg",
-                                            disabled: team1_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize
-                                                || team2_selected().len() > d.tournament.max_team_size_field.unwrap_or(0) as usize
+                                            disabled: team1_over_field_limit
+                                                || team2_over_field_limit
                                                 || team1_has_unpaid
                                                 || team2_has_unpaid,
                                             "Start Match"

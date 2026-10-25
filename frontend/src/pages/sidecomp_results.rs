@@ -5,6 +5,79 @@ use crate::types::{SideCompStandingRow, SideCompStandingTable};
 use dioxus::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::callback::Interval;
+use std::cmp::Ordering;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StandingSort {
+    Wins,
+    WinRatio,
+}
+
+fn ordered_standings(rows: &[SideCompStandingRow], sort: StandingSort) -> Vec<SideCompStandingRow> {
+    let mut ordered = rows.to_vec();
+    ordered.sort_by(|left, right| match sort {
+        StandingSort::Wins => wins_order(left, right),
+        StandingSort::WinRatio => win_ratio_order(left, right),
+    });
+    for (index, row) in ordered.iter_mut().enumerate() {
+        row.rank = (index as i32) + 1;
+    }
+    ordered
+}
+
+fn wins_order(left: &SideCompStandingRow, right: &SideCompStandingRow) -> Ordering {
+    right
+        .wins
+        .cmp(&left.wins)
+        .then_with(|| left.entry_number.cmp(&right.entry_number))
+        .then_with(|| left.registration_id.cmp(&right.registration_id))
+}
+
+fn win_ratio_order(left: &SideCompStandingRow, right: &SideCompStandingRow) -> Ordering {
+    let left_games = left.wins + left.losses.unwrap_or(0);
+    let right_games = right.wins + right.losses.unwrap_or(0);
+    match (left_games <= 0, right_games <= 0) {
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        (false, false) => {
+            let left_ratio = left.wins as f64 / left_games as f64;
+            let right_ratio = right.wins as f64 / right_games as f64;
+            match right_ratio.partial_cmp(&left_ratio).unwrap_or(Ordering::Equal) {
+                Ordering::Equal => {}
+                order => return order,
+            }
+            match right.wins.cmp(&left.wins) {
+                Ordering::Equal => {}
+                order => return order,
+            }
+        }
+        (true, true) => {}
+    }
+    left.entry_number
+        .cmp(&right.entry_number)
+        .then_with(|| left.registration_id.cmp(&right.registration_id))
+}
+
+#[component]
+fn StandingSortHeader(label: &'static str, active: bool, onsort: EventHandler<()>) -> Element {
+    rsx! {
+        th {
+            scope: "col",
+            aria_sort: if active { "descending" } else { "none" },
+            button {
+                r#type: "button",
+                class: if active {
+                    "btn btn-link p-0 align-baseline text-decoration-none fw-bold"
+                } else {
+                    "btn btn-link p-0 align-baseline text-decoration-none fw-normal"
+                },
+                style: "color: inherit;",
+                onclick: move |_| onsort.call(()),
+                "{label}"
+            }
+        }
+    }
+}
 
 fn photo_src(path: &Option<String>) -> Option<String> {
     path.as_ref()
@@ -41,13 +114,26 @@ fn StandingAvatar(photo: Option<String>, is_team: bool) -> Element {
 #[component]
 fn StandingsTableView(table: SideCompStandingTable) -> Element {
     let mut weapon_filter = use_signal(|| None::<String>);
+    let track_losses = table.track_losses;
+    let mut sort_by = use_signal(move || {
+        if track_losses {
+            StandingSort::WinRatio
+        } else {
+            StandingSort::Wins
+        }
+    });
     let rows = table.rows.clone();
+    let sort = if track_losses && sort_by() == StandingSort::WinRatio {
+        StandingSort::WinRatio
+    } else {
+        StandingSort::Wins
+    };
+    let ordered = ordered_standings(&rows, sort);
     let filtered: Vec<SideCompStandingRow> = match weapon_filter() {
-        None => rows.clone(),
-        Some(w) => rows
-            .iter()
+        None => ordered,
+        Some(w) => ordered
+            .into_iter()
             .filter(|r| r.weapon.as_deref() == Some(w.as_str()))
-            .cloned()
             .collect(),
     };
     let weapons_in_table: Vec<String> = {
@@ -107,10 +193,18 @@ fn StandingsTableView(table: SideCompStandingTable) -> Element {
                                 th { "#" }
                                 th { "Player" }
                                 th { "Role" }
-                                th { "Wins" }
+                                StandingSortHeader {
+                                    label: "Wins",
+                                    active: sort == StandingSort::Wins,
+                                    onsort: move |_| sort_by.set(StandingSort::Wins),
+                                }
                                 if table.track_losses {
                                     th { "Losses" }
-                                    th { "Win %" }
+                                    StandingSortHeader {
+                                        label: "Win %",
+                                        active: sort == StandingSort::WinRatio,
+                                        onsort: move |_| sort_by.set(StandingSort::WinRatio),
+                                    }
                                 }
                             }
                         }
@@ -229,5 +323,67 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ordered_standings, StandingSort};
+    use crate::types::SideCompStandingRow;
+
+    fn row(registration_id: i32, entry_number: i32, wins: i32, losses: Option<i32>) -> SideCompStandingRow {
+        SideCompStandingRow {
+            registration_id,
+            entry_number,
+            weapon: None,
+            player_id: format!("p{registration_id}"),
+            display_name: format!("Player {registration_id}"),
+            profile_photo: None,
+            jersey_name: None,
+            jersey_number: None,
+            team_shortname: None,
+            team_profile_photo: None,
+            wins,
+            losses,
+            win_percentage: None,
+            rank: 0,
+        }
+    }
+
+    #[test]
+    fn win_ratio_sort_puts_unplayed_last_and_breaks_ties_by_wins() {
+        let rows = vec![
+            row(2, 2, 6, Some(2)),
+            row(4, 4, 0, Some(0)),
+            row(1, 1, 1, Some(0)),
+            row(3, 3, 3, Some(1)),
+        ];
+        let ordered = ordered_standings(&rows, StandingSort::WinRatio);
+        assert_eq!(
+            ordered.iter().map(|standing| standing.registration_id).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(ordered.iter().map(|standing| standing.rank).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn wins_sort_is_descending_and_does_not_reverse() {
+        let rows = vec![
+            row(1, 10, 1, Some(0)),
+            row(2, 2, 6, Some(2)),
+            row(3, 3, 3, Some(1)),
+            row(5, 4, 3, Some(0)),
+            row(4, 8, 0, Some(0)),
+        ];
+        let ordered = ordered_standings(&rows, StandingSort::Wins);
+        assert_eq!(
+            ordered.iter().map(|standing| standing.registration_id).collect::<Vec<_>>(),
+            vec![2, 3, 5, 1, 4]
+        );
+        let again = ordered_standings(&ordered, StandingSort::Wins);
+        assert_eq!(
+            again.iter().map(|standing| standing.registration_id).collect::<Vec<_>>(),
+            vec![2, 3, 5, 1, 4]
+        );
     }
 }

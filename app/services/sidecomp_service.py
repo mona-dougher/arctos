@@ -1217,12 +1217,14 @@ class SideCompService:
         )
 
     @staticmethod
-    def standings(comp_id: int) -> Result[dict, ArctosError]:
-        """Compute public standings tables for *comp_id*.
+    def standings(comp_id: int, *, include_below_cut: bool = False) -> Result[dict, ArctosError]:
+        """Compute standings tables for *comp_id*.
 
         Rankings are computed per table over all valid points, then an optional
-        top-N cut is applied. Weapon filtering is left to the client so ranks
-        remain global within each table. Incomplete registrations are excluded.
+        top-N cut is applied. ``include_below_cut`` keeps every ranked player
+        for an organizer viewing the in-app results page. Weapon filtering is
+        left to the client so ranks remain global within each table.
+        Incomplete registrations are excluded.
         """
         from sqlalchemy import case, func
 
@@ -1326,7 +1328,7 @@ class SideCompService:
             ranked = sorted(members, key=sort_key)
             ranked_rows = [row_for(reg, idx, track_losses) for idx, reg in enumerate(ranked, start=1)]
             top_n = sc.only_show_top_n_results
-            if top_n is not None and top_n > 0:
+            if not include_below_cut and top_n is not None and top_n > 0:
                 ranked_rows = ranked_rows[:top_n]
             return {"id": table_id, "title": title, "track_losses": track_losses, "rows": ranked_rows}
 

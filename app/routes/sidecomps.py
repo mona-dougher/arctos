@@ -1,6 +1,6 @@
 """Side competition routes."""
 
-from flask import Blueprint, g, jsonify
+from flask import Blueprint, g, jsonify, request
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
 
 from app.services._common import current_user_type
@@ -438,9 +438,23 @@ def eligible_players(comp_id: int):
 @bp.route("/sidecomps/<int:comp_id>/enter-results-roster", methods=["GET"])
 @login_required
 def enter_results_roster(comp_id: int):
-    """Authenticated: full registrant roster for the enter-results UI."""
+    """Authenticated roster for the enter-results UI.
+
+    Without ``q``, returns every registrant. With ``q``, returns registrants
+    whose entry number contains that digit string.
+    """
     res = SideCompService.enter_results_roster(comp_id)
-    return json_from_result(res, ok_to_payload=lambda payload: payload)
+    query = (request.args.get("q") or "").strip()
+
+    def payload_for(payload):
+        if not query:
+            return payload
+        return {
+            **payload,
+            "registrants": [row for row in payload["registrants"] if query in str(row["entry_number"])],
+        }
+
+    return json_from_result(res, ok_to_payload=payload_for)
 
 
 @bp.route("/sidecomps/<int:comp_id>/results", methods=["POST"])
@@ -538,6 +552,13 @@ def finalize(comp_id: int):
 
 @bp.route("/sidecomps/<int:comp_id>/standings", methods=["GET"])
 def standings(comp_id: int):
-    """Public: standings tables for a side competition."""
-    res = SideCompService.standings(comp_id)
+    """Standings tables. Organizers see every ranked player; everyone else gets the top-N cut."""
+    from models import SideComp
+
+    include_below_cut = False
+    if current_user.is_authenticated:
+        sc = SideComp.query.get(comp_id)
+        if sc is not None and PermissionService.is_tournament_organizer(sc.event, current_user):
+            include_below_cut = True
+    res = SideCompService.standings(comp_id, include_below_cut=include_below_cut)
     return json_from_result(res, ok_to_payload=lambda payload: payload)
