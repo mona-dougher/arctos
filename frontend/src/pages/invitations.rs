@@ -47,7 +47,7 @@ pub fn Invitations(url: String) -> Element {
                                 div { class: "alert alert-info",
                                     strong { "Current Team Size: " }
                                     "{d.current_team_size}"
-                                    if let Some(max) = d.tournament.max_team_size_roster {
+                                    if let Some(max) = d.tournament.max_team_size_roster.filter(|max| *max > 0) {
                                         " / {max} (max)"
                                     }
                                 }
@@ -68,7 +68,10 @@ pub fn Invitations(url: String) -> Element {
                                                     let url_clone = url.clone();
                                                     let url_accept = url.clone();
                                                     let url_decline = url.clone();
-                                                    let at_cap = d.tournament.max_team_size_roster.map(|max| d.current_team_size >= max).unwrap_or(false);
+                                                    let at_cap = d.tournament
+                                                        .max_team_size_roster
+                                                        .filter(|max| *max > 0)
+                                                        .is_some_and(|max| d.current_team_size >= max);
                                                     rsx! {
                                                         tr { key: "{invitation.registration.id}",
                                                             td {

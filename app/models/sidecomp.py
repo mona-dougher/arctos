@@ -48,8 +48,10 @@ class SideComp(db.Model):
             that players may select when registering. Defaults to all.
         only_show_top_n_results: When ``None``, the results page shows all
             ranked players. When ``0``, the results page is hidden. When a
-            positive integer ``N``, each results table shows only the top
-            ``N`` players (filters then apply within that cut).
+            positive integer ``N``, each public results table shows only the
+            top ``N`` players (filters then apply within that cut). Tournament
+            organizers still receive every ranked player on the in-app
+            results page.
         created_at: Timestamp when the side competition was created.
     """
 

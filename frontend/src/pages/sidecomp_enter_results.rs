@@ -1,8 +1,10 @@
 use crate::api;
 use crate::components::PompfenIcon;
-use crate::types::{SideCompEnterRosterPlayer, SideCompResultEntry};
+use crate::types::{SideCompEnterRoster, SideCompEnterRosterPlayer, SideCompResultEntry};
 use crate::Route;
 use dioxus::prelude::*;
+use std::cell::Cell;
+use std::rc::Rc;
 
 #[derive(Clone, Debug, PartialEq)]
 struct HistoryEvent {
@@ -56,6 +58,76 @@ fn collapse_history(events: &[HistoryEvent]) -> Vec<HistoryGroup> {
     groups
 }
 
+fn entry_number_matches(entry_number: i32, query: &str) -> bool {
+    entry_number.to_string().contains(query)
+}
+
+fn merge_roster_lookup(
+    current: &SideCompEnterRoster,
+    query: &str,
+    update: &SideCompEnterRoster,
+) -> SideCompEnterRoster {
+    let mut next = current.clone();
+    next.active = update.active;
+    next.name = update.name.clone();
+    next.type_ = update.type_.clone();
+    next.id = update.id;
+    next.registrants
+        .retain(|player| !entry_number_matches(player.entry_number, query));
+    next.registrants.extend(update.registrants.clone());
+    next.registrants.sort_by(|left, right| {
+        right
+            .registered
+            .cmp(&left.registered)
+            .then_with(|| left.entry_number.cmp(&right.entry_number))
+            .then_with(|| left.player_id.cmp(&right.player_id))
+    });
+    next
+}
+
+fn apply_roster_response(mut roster: Signal<Option<SideCompEnterRoster>>, query: &str, data: SideCompEnterRoster) {
+    let next = if query.is_empty() {
+        data
+    } else if let Some(current) = roster() {
+        merge_roster_lookup(&current, query, &data)
+    } else {
+        data
+    };
+    if roster().as_ref() != Some(&next) {
+        roster.set(Some(next));
+    }
+}
+
+fn queue_roster_refresh(
+    comp_id: i32,
+    query: String,
+    request_serial: Rc<Cell<u32>>,
+    roster: Signal<Option<SideCompEnterRoster>>,
+    mut roster_error: Signal<Option<String>>,
+) {
+    let serial = request_serial.get().wrapping_add(1);
+    request_serial.set(serial);
+    spawn(async move {
+        let lookup = if query.is_empty() { None } else { Some(query.as_str()) };
+        match api::sidecomp_enter_results_roster(comp_id, lookup).await {
+            Ok(data) => {
+                if request_serial.get() != serial {
+                    return;
+                }
+                apply_roster_response(roster, &query, data);
+                if roster_error().is_some() {
+                    roster_error.set(None);
+                }
+            }
+            Err(err) => {
+                if request_serial.get() == serial && roster().is_none() {
+                    roster_error.set(Some(err));
+                }
+            }
+        }
+    });
+}
+
 fn photo_url(path: &Option<String>) -> Option<String> {
     path.as_ref()
         .map(|p| format!("{}/static/{}", api::base_url(), p))
@@ -86,8 +158,43 @@ fn AvatarCircle(photo: Option<String>, size: String, is_team: bool) -> Element {
 
 #[component]
 pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
-    let roster = use_resource(move || async move { api::sidecomp_enter_results_roster(comp_id).await });
+    let roster = use_signal(|| None::<SideCompEnterRoster>);
+    let mut roster_error = use_signal(|| None::<String>);
+    let mut initial_finished = use_signal(|| false);
+    let initial_started = use_hook(|| Rc::new(Cell::new(false)));
+    let request_serial = use_hook(|| Rc::new(Cell::new(0u32)));
     let mut query = use_signal(String::new);
+
+    use_effect(move || {
+        if initial_started.get() {
+            return;
+        }
+        initial_started.set(true);
+        spawn(async move {
+            match api::sidecomp_enter_results_roster(comp_id, None).await {
+                Ok(data) => {
+                    apply_roster_response(roster, "", data);
+                    roster_error.set(None);
+                }
+                Err(err) => {
+                    if roster().is_none() {
+                        roster_error.set(Some(err));
+                    }
+                }
+            }
+            initial_finished.set(true);
+        });
+    });
+    {
+        let request_serial = request_serial.clone();
+        use_effect(move || {
+            let entered = query();
+            if entered.is_empty() || !initial_finished() {
+                return;
+            }
+            queue_roster_refresh(comp_id, entered, request_serial.clone(), roster, roster_error);
+        });
+    }
     let mut history = use_signal(Vec::<HistoryEvent>::new);
     let mut error = use_signal(|| None::<String>);
     let mut busy_player = use_signal(|| None::<String>);
@@ -338,8 +445,8 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                 div { class: "alert alert-danger mx-2 py-1 mb-1", "{err}" }
             }
 
-            match roster.read().as_ref() {
-                Some(Ok(data)) if !data.active => {
+            match roster() {
+                Some(data) if !data.active => {
                     rsx! {
                         div { class: "alert alert-warning mx-2 mt-2",
                             "This side competition is not active; results cannot be entered."
@@ -350,8 +457,8 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
             }
 
             div { class: "sc-results",
-                match roster.read().as_ref() {
-                    Some(Ok(data)) if data.active => {
+                match roster() {
+                    Some(data) if data.active => {
                         let q = query();
                         let matches: Vec<SideCompEnterRosterPlayer> = if q.is_empty() {
                             Vec::new()
@@ -479,8 +586,13 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                             }
                         }
                     }
-                    Some(Err(e)) => rsx! { div { class: "alert alert-danger", "{e}" } },
-                    None => rsx! { div { class: "text-center mt-4", div { class: "spinner-border" } } },
+                    None => {
+                        if let Some(err) = roster_error() {
+                            rsx! { div { class: "alert alert-danger", "{err}" } }
+                        } else {
+                            rsx! { div { class: "text-center mt-4", div { class: "spinner-border" } } }
+                        }
+                    }
                     _ => rsx! {},
                 }
             }
@@ -596,5 +708,56 @@ pub fn SideCompEnterResults(url: String, comp_id: i32) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_roster_lookup;
+    use crate::types::{SideCompEnterRoster, SideCompEnterRosterPlayer};
+
+    fn player(player_id: &str, entry_number: i32, display_name: &str) -> SideCompEnterRosterPlayer {
+        SideCompEnterRosterPlayer {
+            registration_id: Some(entry_number),
+            registered: true,
+            entry_number,
+            weapon: None,
+            player_id: player_id.to_string(),
+            display_name: display_name.to_string(),
+            profile_photo: None,
+            jersey_name: None,
+            jersey_number: None,
+            team_id: None,
+            team_shortname: None,
+            team_profile_photo: None,
+            track_losses: false,
+        }
+    }
+
+    fn roster(registrants: Vec<SideCompEnterRosterPlayer>) -> SideCompEnterRoster {
+        SideCompEnterRoster {
+            id: 1,
+            name: "Duel".to_string(),
+            type_: "DUELING".to_string(),
+            active: true,
+            registrants,
+        }
+    }
+
+    #[test]
+    fn lookup_replaces_matching_cached_registrants_and_keeps_the_rest() {
+        let cached = roster(vec![player("old", 12, "Old"), player("keep", 7, "Keep")]);
+        let mut refreshed = player("fresh", 12, "Fresh");
+        refreshed.registered = true;
+        let update = roster(vec![refreshed, player("new", 120, "New")]);
+        let merged = merge_roster_lookup(&cached, "12", &update);
+        assert_eq!(
+            merged
+                .registrants
+                .iter()
+                .map(|registrant| registrant.player_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["keep", "fresh", "new"]
+        );
     }
 }
