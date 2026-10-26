@@ -67,6 +67,10 @@ setup-frontend:
 lint:
     @uv run ruff check .
 
+# Check the typed modules and their API contracts listed in pyproject.toml.
+typecheck:
+    @uv run mypy
+
 # Run ruff with autofix.
 lint-fix:
     @uv run ruff check --fix .

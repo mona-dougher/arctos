@@ -13,6 +13,7 @@ just test                     # backend pytest suite
 just test -k registration     # focused backend tests
 just frontend-test            # Rust tests on the host target
 just lint
+just typecheck
 uv run ruff format --check .
 ```
 
@@ -28,9 +29,29 @@ cd frontend
 cargo check --locked --target wasm32-unknown-unknown
 ```
 
-CI runs backend tests with coverage, Python lint/format checks, frontend unit
+CI runs backend tests with coverage, Python lint/format and type checks, frontend unit
 tests, and the WebAssembly compile check. Browser suites require running servers
 and are separate from ordinary pytest.
+
+## Type checks
+
+Run `just typecheck` (or `uv run mypy`) to check the modules listed under
+`[tool.mypy].files` in `pyproject.toml`. The same command runs in pre-commit
+and CI. The checked scope covers `app/error_values.py`,
+`app/utils/name_validation.py`, and their static API contracts in
+`tests/typecheck/error_values.py`.
+
+The contract file uses `assert_type` for inferred types and precise
+`type: ignore` comments for deliberately invalid calls. Mypy's unused-ignore
+check reports when an invalid call becomes accepted. These checks cover
+callback types, error types, and decorated function signatures. Runtime
+tests verify that `Option` and `Result` reject boolean conversion. Ordinary
+string, collection, and numeric conditions need explicit predicates during
+code review.
+
+Add each fully typed module to the file list together with its contracts.
+Imports outside that list are skipped; their implementations require their
+own tests and review.
 
 ## Writing useful tests
 

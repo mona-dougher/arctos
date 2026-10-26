@@ -25,7 +25,7 @@ from models import (
     Player,
     db,
 )
-from app.error_values import Ok, Err
+from app.error_values import Ok, Err, Some
 from app.services.dual_write import (
     clear_match_referees,
     get_match_referee_rows,
@@ -219,9 +219,9 @@ def add_match(tournament_url):
     ribbon = request.form.get("ribbon", "") == "on"  # Checkbox value
 
     match_name = request.form["match_name"]
-    mn_err = match_name_char_error(match_name)
-    if mn_err:
-        return jsonify({"success": False, "error": mn_err}), 400
+    match match_name_char_error(match_name):
+        case Some(error):
+            return jsonify({"success": False, "error": error}), 400
 
     # Validate match name uniqueness
     # BREAK and JOIN matches can have duplicate names on different fields
@@ -475,9 +475,9 @@ def update_match(tournament_url):
         refs_initial = request.form.get("refs", "")
 
     new_match_name = request.form.get("match_name", match.name)
-    mn_err = match_name_char_error(new_match_name)
-    if mn_err:
-        return jsonify({"success": False, "error": mn_err}), 400
+    match match_name_char_error(new_match_name):
+        case Some(error):
+            return jsonify({"success": False, "error": error}), 400
 
     # Validate match name uniqueness (excluding current match)
     # BREAK and JOIN matches can have duplicate names on different fields

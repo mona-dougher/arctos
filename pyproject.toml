@@ -101,6 +101,14 @@ directory = "htmlcov"
 [tool.mypy]
 python_version = "3.12"
 strict = true
+# Keep the checked modules explicit so each addition receives a complete review.
+files = [
+    "app/error_values.py",
+    "app/utils/name_validation.py",
+    "tests/typecheck/error_values.py",
+]
+follow_imports = "skip"
+warn_unreachable = true
 
 [tool.ruff]
 line-length = 120

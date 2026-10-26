@@ -223,6 +223,7 @@ gunicorn using `.env`; it defaults to TLS on port 8081. Use
 | Run backend tests | `just test` |
 | Run frontend unit tests | `just frontend-test` |
 | Lint | `just lint` |
+| Check typed Python APIs | `just typecheck` |
 | Format | `just format` |
 | Apply migrations | `just db-migrate-safe` |
 | Generate a migration | `just db-revision "snake_case_message"` |

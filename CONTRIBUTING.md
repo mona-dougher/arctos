@@ -13,6 +13,8 @@ browser/device details. Remove private information from screenshots and logs.
 3. Implement the change with tests that exercise its behavior. Prioritize
    permissions, validation, persistence, failure recovery, and regressions.
    A wording or cosmetic change usually needs review rather than a new test.
+   Follow the [value-handling conventions](app/README.md#error-values) for
+   optional values, expected failures, and boolean conditions.
 4. Run the relevant checks from [TESTING.md](TESTING.md). Format Python with
    `just format`; use Rust formatting for changed Rust code. Avoid unrelated
    formatting changes.
@@ -23,7 +25,7 @@ browser/device details. Remove private information from screenshots and logs.
 Use conventional commit subjects, for example
 `fix: retain registration draft after a failed save`.
 
-CI runs backend tests and coverage, Python lint/format checks, frontend unit
+CI runs backend tests and coverage, Python lint/format and type checks, frontend unit
 tests, and the WebAssembly compile check. Changes affecting interactions also
 need browser review; passing a compile check does not verify layout or focus.
 

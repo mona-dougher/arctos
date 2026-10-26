@@ -12,6 +12,7 @@ from flask import jsonify, request
 from flask_login import current_user, login_required
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.error_values import Some
 from app.domain.enums import (
     STRUCTURAL_SCHEDULE_TYPES,
     MatchStatus,
@@ -529,9 +530,9 @@ def create_match_api(tournament_url):
     name = data.get("name")
     if not name:
         return jsonify({"error": "Match name is required"}), 400
-    mn_err = match_name_char_error(name.strip())
-    if mn_err:
-        return jsonify({"error": mn_err}), 400
+    match match_name_char_error(name.strip()):
+        case Some(error):
+            return jsonify({"error": error}), 400
 
     # Parse schedule type and field for name-uniqueness scope (BREAK/JOIN are unique per field)
     schedule_type_str = data.get("schedule_type")
@@ -968,9 +969,9 @@ def create_break_group_api(tournament_url):
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Name is required"}), 400
-    mn_err = match_name_char_error(name)
-    if mn_err:
-        return jsonify({"error": mn_err}), 400
+    match match_name_char_error(name):
+        case Some(error):
+            return jsonify({"error": error}), 400
 
     try:
         schedule_type = ScheduleType(data.get("schedule_type") or "BREAK")

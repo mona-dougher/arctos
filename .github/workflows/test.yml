@@ -33,6 +33,9 @@ jobs:
       - name: Run linter
         run: just lint
 
+      - name: Check typed Python APIs
+        run: just typecheck
+
       - name: Run format checker
         run: uv run ruff format --check .
 
