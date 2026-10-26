@@ -15,12 +15,17 @@
 .arctos-app .sidecomp-standing-avatar { flex-shrink: 0; }
 .arctos-app .sidecomp-standing-entry { display: flex; flex-wrap: wrap; gap: .15rem .65rem; }
 .arctos-app .sidecomp-standing-weapon { display: inline-flex; align-items: center; gap: .25rem; }
+.arctos-app .sidecomp-standing-self { display: inline-block; margin-left: .5rem; padding: .05rem .3rem; border: 1px solid currentColor; border-radius: .25rem; font-size: .75rem; white-space: nowrap; }
+
+.arctos-app .sidecomp-class-name { font-weight: 600; }
+.arctos-app .sidecomp-class-leaders th:first-child { width: 5rem; }
 
 @media (max-width: 575.98px) {
   .arctos-app .sidecomp-weapon-filter { width: 100%; }
   .arctos-app .sidecomp-weapon-filter .form-select { flex: 1; min-width: 0; }
   .arctos-app .sidecomp-standings-table th.table-number { width: 3.25rem; }
   .arctos-app .sidecomp-standings-table th:first-child { width: 2.25rem; }
+  .arctos-app .sidecomp-class-leaders th:first-child { width: 4.5rem; }
   .arctos-app .sidecomp-standings-table :is(th, td) { padding: .5rem .25rem; }
   .arctos-app .sidecomp-standings-table th { font-size: .75rem; }
   .arctos-app .sidecomp-standings-table .results-sort-button { min-width: 44px; justify-content: flex-end; gap: .15rem; white-space: normal; }

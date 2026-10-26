@@ -110,7 +110,7 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                                 match raw.parse::<i32>() {
                                     Ok(v) if v >= 0 => Some(v),
                                     _ => {
-                                        error.set(Some("Top N results must be a non-negative integer or blank".into()));
+                                        error.set(Some("Public result limit must be a non-negative integer or blank".into()));
                                         return;
                                     }
                                 }
@@ -217,7 +217,7 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         summary { "Advanced options" small {
                             "Loss tracking, weapon rules, and standings"
                             if allowed_weapons().len() != default_allowed_weapons().len() { " · restricted weapons" }
-                            if !top_n_text().trim().is_empty() { " · limited results" }
+                            if !top_n_text().trim().is_empty() { " · results display configured" }
                         } }
                         div { class: "settings-advanced-body",
                     if type_() == "CHAIN_BREAKING" {
@@ -291,7 +291,7 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                             oninput: move |evt| top_n_text.set(evt.value()),
                         }
                         div { id: "sidecomp-top-n-help", class: "form-text",
-                            "Leave blank to publish all results, or enter 0 to hide them. A positive number limits each table after weapon filtering and sorting. When results are enabled, organizers can view the full list."
+                            "Enter 3 to publish the top three in each table. Dueling also shows one leader per weapon class. Players can see their own result, and organizers can see complete standings. Leave blank to publish all results, or enter 0 to hide results."
                         }
                     }
                         }

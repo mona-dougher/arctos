@@ -1948,6 +1948,10 @@ pub struct SideCompStandingTable {
     #[serde(default)]
     pub sort: String,
     pub rows: Vec<SideCompStandingRow>,
+    #[serde(default)]
+    pub personal_row: Option<SideCompStandingRow>,
+    #[serde(default)]
+    pub class_winners: Vec<SideCompStandingRow>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

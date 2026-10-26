@@ -654,27 +654,33 @@ members appear as unattached until the team approves them. Organizers can also
 manage entries through the side competition's tools.
 
 Organizers control registration, active scoring, enabled weapons, loss tracking,
-and how many standings are public. Logged-in users can record results while a
+and results display. Logged-in users can record results while a
 competition is active and not finalized. Results record their submitter;
 organizers review validity and resolve flags before finalizing.
 
-The public result limit applies after filtering by weapon and sorting. Leaving
-the limit blank publishes all standings; zero hides results; a positive number
-publishes that many leaders in each selected view. Organizers can view every
-matching player. Finalizing results preserves the publication limit.
+The **Public result limit** starts at three in the creation form. A positive
+number publishes that many leaders in each table; blank publishes every player;
+zero hides all results. Organizers can see complete standings when results are
+enabled. Finalizing results preserves these settings.
 
-Chain/breaking has separate Chains and Breaks tables. Each table has its own
-weapon filter and ranking controls. Weapon choices include all complete entries
-in the table, including players below the public limit. Rankings use wins, or win
-percentage when losses are tracked. Players with no results follow played
-entries in the win-percentage ranking.
+Chain Pits use **Chain/breaking**, with separate Chains and Breaks tables. Bear
+Pits use **Dueling**, with overall leaders and one leader per represented weapon
+class. Weapon choices include every complete registration in the table.
+Rankings use wins, or win percentage when losses are tracked. Players with no
+results follow played entries in the win-percentage ranking.
 
-Use **Weapon** to choose all weapons or one weapon when the table has multiple
-choices. Each player's entry number, weapon, jersey, and team appear with their
-name. Scores occupy separate columns. Select **Wins** or **Win %** to rank by
-that value; the arrow identifies the active ranking, with the highest values
-first. Live updates preserve the selection. If the selected weapon has no
-complete entries, the table returns to all weapons.
+Use **Weapon** to filter the published leaders, or the complete standings when
+viewing as an organizer. Ranks refer to the whole table. Each player's entry
+number, weapon, jersey, and team appear with their name. Scores occupy separate
+columns. Select **Wins** or **Win %** to rank by that value; the arrow identifies
+the active ranking, with the highest values first. Live updates preserve the
+selection. If the selected weapon has no complete entries, the table returns to
+all weapons.
+
+Signed-in players see their own rank and scores in **Your result**, including
+entries below the public limit. This card uses the default ranking and remains
+visible while browsing weapons. Their visible standings rows carry a **You**
+label.
 
 ### Running a Side Comp
 
@@ -686,7 +692,7 @@ review.
 
 Recent entries remain visible while scoring. Organizers use **Manage results**
 to review entries and finalize the competition. Public standings update as
-results change, subject to the configured visibility limit.
+results change while results are enabled.
 
 ## OBS Scoreboard Integration
 

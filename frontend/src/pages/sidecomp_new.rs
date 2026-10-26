@@ -10,7 +10,7 @@ pub fn SideCompNew(url: String) -> Element {
     let mut type_ = use_signal(|| "DUELING".to_string());
     let mut description = use_signal(String::new);
     let mut allowed_weapons = use_signal(default_allowed_weapons);
-    let mut top_n_text = use_signal(String::new);
+    let mut top_n_text = use_signal(|| "3".to_string());
     let mut error = use_signal(|| None::<String>);
     let mut submitting = use_signal(|| false);
 
@@ -43,7 +43,7 @@ pub fn SideCompNew(url: String) -> Element {
                                 match raw.parse::<i32>() {
                                     Ok(v) if v >= 0 => Some(v),
                                     _ => {
-                                        error.set(Some("Top N results must be a non-negative integer or blank".into()));
+                                        error.set(Some("Public result limit must be a non-negative integer or blank".into()));
                                         return;
                                     }
                                 }
@@ -111,7 +111,7 @@ pub fn SideCompNew(url: String) -> Element {
                         summary { "Advanced options" small {
                             "Weapon rules and standings"
                             if allowed_weapons().len() != default_allowed_weapons().len() { " · restricted weapons" }
-                            if !top_n_text().trim().is_empty() { " · limited results" }
+                            if !top_n_text().trim().is_empty() { " · results display configured" }
                         } }
                         div { class: "settings-advanced-body",
                     AllowedWeaponsCheckboxes { selected: allowed_weapons }
@@ -128,7 +128,7 @@ pub fn SideCompNew(url: String) -> Element {
                             oninput: move |evt| top_n_text.set(evt.value()),
                         }
                         div { id: "sidecomp-top-n-help", class: "form-text",
-                            "Leave blank to publish all results, or enter 0 to hide them. A positive number limits each table after weapon filtering and sorting. When results are enabled, organizers can view the full list."
+                            "Enter 3 to publish the top three in each table. Dueling also shows one leader per weapon class. Players can see their own result, and organizers can see complete standings. Leave blank to publish all results, or enter 0 to hide results."
                         }
                     }
                         }

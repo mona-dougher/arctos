@@ -265,8 +265,9 @@ class SideCompService:
                 strings are treated as ``None``.
             allowed_weapons: Optional list of :class:`~app.domain.enums.Pompfen`
                 names. Defaults to all pompfen options when omitted.
-            only_show_top_n_results: Optional top-N standings cut. ``None``
-                means show all; ``0`` hides the results page.
+            only_show_top_n_results: Optional public standings limit.
+                ``None`` means show all; ``0`` hides results. Dueling also
+                publishes one leader per weapon class.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the persisted
@@ -428,7 +429,8 @@ class SideCompService:
                 names. If ``None``, the field is left untouched.
             only_show_top_n_results: Sentinel ``...`` leaves the field untouched.
                 Explicit ``None`` clears it (show all). ``0`` hides results.
-                Positive ints keep the top N.
+                Positive ints limit public tables to the top N. Dueling also
+                publishes one leader per weapon class.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the updated
@@ -1221,17 +1223,25 @@ class SideCompService:
         comp_id: int,
         *,
         include_below_cut: bool = False,
+        viewer_player_id: str | None = None,
+        application_view: bool = False,
         table_id: str | None = None,
         weapon: str | None = None,
         sort_by: str | None = None,
     ) -> Result[dict, ArctosError]:
         """Compute standings tables for *comp_id*.
 
-        Each table filters by weapon and ranks matching complete registrations
-        before applying the public visibility limit. Weapon choices describe
-        every complete registration in that table. ``include_below_cut`` keeps
-        every matching player for an organizer viewing the in-app results page.
-        Only valid results count toward wins and losses.
+        ``application_view`` publishes leaders from each whole ranked table
+        before weapon filtering and adds dueling leaders for each weapon class.
+        Personal standings also retain the whole-table rank and are independent
+        of the selected weapon. The external API uses the default summary,
+        which filters before ranking and limiting rows.
+
+        ``include_below_cut`` returns complete standings for an organizer.
+        ``viewer_player_id`` adds only that player's own standing. Callers must
+        derive both values from the authenticated viewer. A zero limit hides
+        every result, including personal standings and class leaders. Only
+        valid results count toward wins and losses.
         """
         from sqlalchemy import case, func
 
@@ -1333,9 +1343,6 @@ class SideCompService:
 
         def build_table(table_id: str, title: str, members: list, track_losses: bool) -> dict:
             available_weapons = [p.name for p in Pompfen if any(reg.weapon == p.value for reg in members)]
-            selected_members = members
-            if selected_weapon is not None:
-                selected_members = [reg for reg in members if reg.weapon == selected_weapon.value]
             effective_sort = "win_percentage" if track_losses and sort_by != "wins" else "wins"
 
             def sort_key(reg: SideCompRegistration):
@@ -1347,10 +1354,37 @@ class SideCompService:
                     return (1, 0.0, 0, reg.entry_number)
                 return (0, -wins / games, -wins, reg.entry_number)
 
-            ranked = sorted(selected_members, key=sort_key)
+            ranked = sorted(members, key=sort_key)
+            if not application_view and selected_weapon is not None:
+                ranked = [reg for reg in ranked if reg.weapon == selected_weapon.value]
+            ranked_entries = list(enumerate(ranked, start=1))
             top_n = sc.only_show_top_n_results
-            if not include_below_cut and top_n is not None:
-                ranked = ranked[:top_n]
+            personal_row = None
+            class_winners = []
+            if top_n == 0:
+                visible = []
+            else:
+                for rank, reg in ranked_entries:
+                    if reg.player == viewer_player_id:
+                        personal_row = row_for(reg, rank, track_losses)
+                        break
+                if application_view and sc.type == SideCompType.DUELING:
+                    leaders_by_weapon = {}
+                    for rank, reg in ranked_entries:
+                        leaders_by_weapon.setdefault(reg.weapon, (rank, reg))
+                    for pompfen in Pompfen:
+                        if selected_weapon is not None and selected_weapon != pompfen:
+                            continue
+                        leader = leaders_by_weapon.get(pompfen.value)
+                        if leader is not None:
+                            rank, reg = leader
+                            class_winners.append(row_for(reg, rank, track_losses))
+
+                visible = ranked_entries
+                if not include_below_cut and top_n is not None:
+                    visible = visible[:top_n]
+                if application_view and selected_weapon is not None:
+                    visible = [(rank, reg) for rank, reg in visible if reg.weapon == selected_weapon.value]
             return {
                 "id": table_id,
                 "title": title,
@@ -1358,7 +1392,9 @@ class SideCompService:
                 "available_weapons": available_weapons,
                 "weapon": weapon,
                 "sort": effective_sort,
-                "rows": [row_for(reg, idx, track_losses) for idx, reg in enumerate(ranked, start=1)],
+                "rows": [row_for(reg, rank, track_losses) for rank, reg in visible],
+                "personal_row": personal_row,
+                "class_winners": class_winners,
             }
 
         if sc.type == SideCompType.CHAIN_BREAKING:
@@ -1380,7 +1416,8 @@ class SideCompService:
                 "type": str(sc.type),
                 "finalized": bool(sc.finalized),
                 "only_show_top_n_results": sc.only_show_top_n_results,
-                "showing_all_results": include_below_cut or sc.only_show_top_n_results is None,
+                "showing_all_results": sc.results_page_enabled()
+                and (include_below_cut or sc.only_show_top_n_results is None),
                 "results_page_enabled": sc.results_page_enabled(),
                 "tables": tables,
             }

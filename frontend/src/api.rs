@@ -3621,12 +3621,27 @@ pub async fn sidecomp_finalize(comp_id: i32) -> Result<Value, String> {
     response_json(r).await
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StandingsError {
+    NoAccess,
+    Request(String),
+}
+
+impl std::fmt::Display for StandingsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoAccess => write!(f, "These standings are unavailable or you no longer have access."),
+            Self::Request(message) => write!(f, "{message}"),
+        }
+    }
+}
+
 pub async fn sidecomp_standings(
     comp_id: i32,
     table: Option<&str>,
     weapon: Option<&str>,
     sort: Option<&str>,
-) -> Result<SideCompStandings, String> {
+) -> Result<SideCompStandings, StandingsError> {
     let mut selection = Vec::new();
     if let Some(table) = table {
         selection.push(("table", table));
@@ -3644,8 +3659,11 @@ pub async fn sidecomp_standings(
     )
     .send()
     .await
-    .map_err(|e| e.to_string())?;
-    response_json(r).await
+    .map_err(|error| StandingsError::Request(error.to_string()))?;
+    if matches!(r.status().as_u16(), 401 | 403 | 404) {
+        return Err(StandingsError::NoAccess);
+    }
+    response_json(r).await.map_err(StandingsError::Request)
 }
 
 #[derive(serde::Deserialize)]
