@@ -47,6 +47,35 @@ and the player's account ID, with a fixed purpose prefix. Response data remains
 in bounded, short-lived memory caches. The [server and organizer setup
 guide](../../docs/env-vars.md#registration-forms) covers access and verification.
 
+## Team roster changes
+
+`team_management_service.change_roster(scope, team_id, registration_id, action, actor=actor)`
+updates a player's team assignment within a standalone event or league. Pass
+`Scope.event(event_url)` or `Scope.league(league_url)` from `_common.py`. The
+calling route passes the signed-in account as `actor`; the service verifies its
+permission to manage the team.
+
+| Action | Required player state | Result |
+| --- | --- | --- |
+| `add` | Confirmed registration, unattached | Joins the team's confirmed roster. |
+| `approve` | Pending approval for this team | Joins the team's confirmed roster. |
+| `decline` | Pending approval for this team | Becomes a confirmed, unattached player. |
+| `remove` | Confirmed on this team | Becomes a confirmed, unattached player. |
+
+The team must have a confirmed registration in the same scope. Adding and removing
+players require open player registration; pending requests remain reviewable after
+registration closes. Adding and approving players respect the roster limit, with
+writes serialized per team to keep concurrent approvals within capacity.
+Approving or declining a pending request verifies the player's required form
+before acquiring the roster write lock. The transaction rechecks the player,
+team, pending status, form settings, and manager permission before confirming the
+registration. If the form settings change during verification, the caller must
+retry. Confirmed roster changes preserve the player's registration and do not
+require another form response.
+
+The service preserves payment, waiver, and jersey details. It commits a successful
+change and returns `Ok(None)`, or returns `Err(ArctosError)` for a rejected action.
+
 ## Conventions
 
 ### Static-method namespace classes

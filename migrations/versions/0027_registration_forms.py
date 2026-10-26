@@ -4,16 +4,16 @@ Existing events and leagues retain their registration behavior because all
 six fields default to null. A private per-configuration signing key supports
 personalized form links without storing player responses.
 
-Revision ID: 0026_registration_forms
-Revises: 0025_player_profile_details
+Revision ID: 0027_registration_forms
+Revises: 0026_team_managers
 Create Date: 2026-10-26
 """
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0026_registration_forms"
-down_revision = "0025_player_profile_details"
+revision = "0027_registration_forms"
+down_revision = "0026_team_managers"
 branch_labels = None
 depends_on = None
 

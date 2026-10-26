@@ -8,15 +8,28 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, event
 
 
-def test_registration_form_migration_preserves_existing_scopes(tmp_path):
-    path = Path(__file__).resolve().parents[2] / "migrations/versions/0026_registration_forms.py"
-    spec = importlib.util.spec_from_file_location("migration_0026", path)
+def load_migration(name):
+    path = Path(__file__).resolve().parents[2] / "migrations/versions" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
-    assert migration.down_revision == "0025_player_profile_details"
+    return migration
+
+
+def test_registration_form_migration_preserves_existing_scopes_and_managers(tmp_path):
+    manager_migration = load_migration("0026_team_managers")
+    migration = load_migration("0027_registration_forms")
+    assert migration.down_revision == manager_migration.revision
     engine = create_engine(f"sqlite:///{tmp_path / 'migration.db'}")
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE teams (id TEXT PRIMARY KEY)")
+        connection.exec_driver_sql("CREATE TABLE players (id TEXT PRIMARY KEY)")
+        connection.exec_driver_sql("INSERT INTO teams VALUES ('team')")
+        connection.exec_driver_sql("INSERT INTO players VALUES ('manager')")
+        with Operations.context(MigrationContext.configure(connection)):
+            manager_migration.upgrade()
+        connection.exec_driver_sql("INSERT INTO team_managers VALUES ('team', 'manager')")
         connection.exec_driver_sql("CREATE TABLE registrable_configs (id INTEGER PRIMARY KEY, player_reg_fee NUMERIC)")
         connection.exec_driver_sql(
             "CREATE TABLE leagues (id TEXT PRIMARY KEY, config INTEGER REFERENCES registrable_configs(id))"
@@ -50,5 +63,9 @@ def test_registration_form_migration_preserves_existing_scopes(tmp_path):
             ("standalone", 1, None),
             ("league-event", None, "league"),
         ]
+        assert list(connection.exec_driver_sql("SELECT * FROM team_managers")) == [("team", "manager")]
         assert list(connection.exec_driver_sql("PRAGMA foreign_key_check")) == []
+        with Operations.context(MigrationContext.configure(connection)):
+            manager_migration.downgrade()
+        assert connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE name='team_managers'").first() is None
     engine.dispose()

@@ -59,7 +59,7 @@ change is needed. Review that explanation along with the schema operations.
 
 ## Registration forms
 
-Revision `0026_registration_forms` adds nullable Form URL, code-question ID,
+Revision `0027_registration_forms`, following `0026_team_managers`, adds nullable Form URL, code-question ID,
 response Sheet ID, tab ID, code-heading, and private signing-key columns to
 `registrable_configs`. Existing
 events and leagues have no response requirement until an organizer enables

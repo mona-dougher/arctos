@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 import hashlib
+import sqlite3
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -14,7 +15,7 @@ from app.exceptions import ArctosError, ValidationError
 from app.services._common import Scope
 from app.services.registration_form_service import RegistrationFormService
 from app.services.registration_service import RegistrationService
-from models import League, Player, PlayerRegistration, Team, TO, Tournament, db
+from models import League, Player, PlayerRegistration, Team, TeamManager, TeamRegistration, TO, Tournament, db
 from tests.utils import login_as as _login_as, make_registrable_config
 
 pytestmark = pytest.mark.integration
@@ -73,6 +74,7 @@ def scope(request, tournament, player, team):
     organizer = Player(id="forms-organizer", name="Form Organizer", pw_hash="test")
     db.session.add(organizer)
     db.session.add(TO(user_id=organizer.id, user_type="player", **owner_fields))
+    db.session.add(TeamRegistration(team=team.id, pseudonym=team.name, status="CONFIRMED", **registration_fields))
     db.session.commit()
     return SimpleNamespace(
         kind=kind,
@@ -201,24 +203,123 @@ def test_local_validation_precedes_form_lookup(scope, monkeypatch):
     assert calls == []
 
 
-@pytest.mark.parametrize("action", ["accept", "decline"])
-def test_pending_team_decisions_verify_before_mutation(client, scope, monkeypatch, action):
+@pytest.fixture
+def manager(scope):
+    actor = Player(id="forms-manager", name="Team Manager", pw_hash="test")
+    db.session.add(actor)
+    db.session.flush()
+    db.session.add(TeamManager(team_id=scope.team.id, player_id=actor.id))
+    db.session.commit()
+    return actor
+
+
+def roster_endpoint(scope, row, action, route="managed"):
+    if route == "legacy":
+        legacy_action = "accept" if action == "approve" else action
+        return f"{scope.root}/invitation/{row.id}/{legacy_action}"
+    kind = "leagues" if scope.kind == "league" else "events"
+    return f"/_api/teams/{scope.team.id}/{kind}/{scope.entity.url}/roster/{row.id}/{action}"
+
+
+@pytest.mark.parametrize("action", ["approve", "decline"])
+@pytest.mark.parametrize("route", ["legacy", "managed"])
+@pytest.mark.parametrize("actor", ["owner", "manager"])
+@pytest.mark.parametrize("failure", ["missing", "unavailable"])
+def test_pending_team_decisions_verify_before_mutation(
+    client, scope, manager, monkeypatch, action, route, actor, failure
+):
     row = registration(scope)
     before = row_values(row)
-    login_as(client, scope.team)
-    calls = requirement_stub(monkeypatch, scope, unavailable())
-    endpoint = f"{scope.root}/invitation/{row.id}/{action}"
-    response = client.post(endpoint)
-    assert response.status_code == 503
+    team_row = TeamRegistration.query.filter_by(team=scope.team.id, **scope.registration_fields).one()
+    team_row.paid, team_row.amount_paid = True, 43
+    db.session.commit()
+    login_as(client, scope.team if actor == "owner" else manager)
+    outcome = Err(ValidationError("Complete the registration form.")) if failure == "missing" else unavailable()
+    calls = requirement_stub(monkeypatch, scope, outcome)
+    endpoint = roster_endpoint(scope, row, action, route)
+    data = {"team_id": scope.team.id}
+    response = client.post(endpoint, data=data)
+    assert response.status_code == (400 if failure == "missing" else 503)
     assert calls == [scope.player.id]
     db.session.refresh(row)
+    db.session.refresh(team_row)
     assert row_values(row) == before
+    assert team_row.paid and team_row.amount_paid == 43
 
     requirement_stub(monkeypatch, scope, Ok(None))
-    assert client.post(endpoint).status_code == 200
+    assert client.post(endpoint, data=data).status_code == 200
     db.session.refresh(row)
     assert row.status == RegistrationStatus.CONFIRMED
-    assert row.team == (scope.team.id if action == "accept" else None)
+    assert row.team == (scope.team.id if action == "approve" else None)
+    # Only team and status change when confirming a pending registration.
+    assert row_values(row)[1:3] == before[1:3]
+    assert row_values(row)[4:] == before[4:]
+
+
+@pytest.mark.parametrize("actor", ["owner", "manager"])
+def test_confirmed_roster_changes_do_not_repeat_form_verification(client, scope, manager, monkeypatch, actor):
+    row = registration(scope, status=RegistrationStatus.CONFIRMED)
+    row.team = None
+    db.session.commit()
+    before = row_values(row)
+    login_as(client, scope.team if actor == "owner" else manager)
+    calls = requirement_stub(monkeypatch, scope, unavailable())
+    for action in ("add", "remove"):
+        response = client.post(roster_endpoint(scope, row, action))
+        assert response.status_code == 200, response.get_json()
+    db.session.refresh(row)
+    assert row_values(row) == before
+    assert calls == []
+
+
+@pytest.mark.parametrize("action", ["approve", "decline"])
+@pytest.mark.parametrize("change", ["player", "team", "status", "manager", "form", "config", "enable"])
+def test_pending_decision_rechecks_changes_during_provider_read(client, scope, manager, monkeypatch, action, change):
+    row = registration(scope)
+    before = row_values(row)
+    alternate_config = make_registrable_config(player_registration_open=True, **FORM_FIELDS)
+    if change == "enable":
+        for field in FORM_FIELDS:
+            setattr(scope.config, field, None)
+    db.session.commit()
+    login_as(client, manager)
+    row_id, config_id, entity_id = row.id, scope.config.id, scope.entity.url
+    manager_id, team_id, alternate_id = manager.id, scope.team.id, alternate_config.id
+    replacement_player = scope.organizer.id
+
+    def verify(config, player_id):
+        assert player_id == scope.player.id
+        # A separate writer must succeed during Google I/O. A roster write lock
+        # held too early makes this fail within one second instead of blocking.
+        with sqlite3.connect(db.engine.url.database, timeout=1) as connection:
+            if change in {"player", "team", "status"}:
+                value = {"player": replacement_player, "team": None, "status": "CANCELLED"}[change]
+                connection.execute(f"UPDATE player_registrations SET {change}=? WHERE id=?", (value, row_id))
+            elif change == "manager":
+                connection.execute("DELETE FROM team_managers WHERE team_id=? AND player_id=?", (team_id, manager_id))
+            elif change == "form":
+                connection.execute(
+                    "UPDATE registrable_configs SET registration_form_signing_key=? WHERE id=?", ("a" * 64, config_id)
+                )
+            elif change == "config":
+                table = "leagues" if scope.kind == "league" else "tournaments"
+                connection.execute(f"UPDATE {table} SET registrable_config_id=? WHERE url=?", (alternate_id, entity_id))
+            else:
+                for field, value in FORM_FIELDS.items():
+                    connection.execute(f"UPDATE registrable_configs SET {field}=? WHERE id=?", (value, config_id))
+        return Ok(None)
+
+    monkeypatch.setattr(RegistrationFormService, "require_response", staticmethod(verify))
+    response = client.post(roster_endpoint(scope, row, action))
+    assert response.status_code == (403 if change == "manager" else 400), response.get_json()
+    db.session.refresh(row)
+    expected = list(before)
+    if change == "team":
+        expected[0] = None
+    elif change == "status":
+        expected[3] = RegistrationStatus.CANCELLED
+    assert row_values(row) == tuple(expected)
+    assert row.player == (replacement_player if change == "player" else scope.player.id)
 
 
 def test_team_decision_checks_ownership_before_lookup(client, scope, monkeypatch):

@@ -446,8 +446,8 @@ class RegistrationFormService:
         if code not in codes:
             return Err(
                 ValidationError(
-                    f"No form response was found for @{player_id}. Open the player's personalized form link and submit it, "
-                    "then try again. Recent responses can take a few seconds to appear."
+                    f"No form response was found for @{player_id}. The player must open their personal form on the "
+                    "registration page and submit it before continuing. Recent responses can take a few seconds to appear."
                 )
             )
         return Ok(None)
