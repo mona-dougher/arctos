@@ -1,7 +1,9 @@
 """Registration prerequisites are checked before state changes and stay private."""
 
 from datetime import datetime, timedelta
+import hashlib
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from flask import g
@@ -19,18 +21,24 @@ pytestmark = pytest.mark.integration
 
 FORM_FIELDS = {
     "registration_form_url": "https://docs.google.com/forms/d/e/test-form/viewform",
+    "registration_form_entry_id": "123456",
+    "registration_form_signing_key": hashlib.sha256(b"Integration form configuration").hexdigest(),
     "registration_form_sheet_id": "private-response-sheet",
     "registration_form_sheet_gid": 0,
-    "registration_form_username_column": "Arctos username",
+    "registration_form_code_column": "Registration code",
 }
 PRIVATE_KEYS = {
     "registration_form_sheet_url",
-    "registration_form_username_column",
+    "registration_form_code_column",
     "registration_form_service_account_email",
     "registration_form_available",
     "registration_form_sheet_id",
     "registration_form_sheet_gid",
+    "registration_form_entry_id",
+    "registration_form_signing_key",
 }
+
+FORM_SETUP_URL = FORM_FIELDS["registration_form_url"] + "?usp=pp_url&entry.123456=ARCTOS_CODE"
 
 
 @pytest.fixture(params=["tournament", "league"])
@@ -79,6 +87,7 @@ def scope(request, tournament, player, team):
         player=player,
         team=team,
         edit_url=detail + "/registrations/player/me",
+        form_url=detail + "/registration-form",
     )
 
 
@@ -272,9 +281,9 @@ def test_organizer_registration_verifies_target_before_changes(client, scope, mo
 def settings_payload(scope, **changes):
     data = {
         "registration_form_required": "true" if scope.kind == "tournament" else True,
-        "registration_form_url": FORM_FIELDS["registration_form_url"],
+        "registration_form_url": FORM_SETUP_URL,
         "registration_form_sheet_url": "https://docs.google.com/spreadsheets/d/private-response-sheet/edit#gid=0",
-        "registration_form_username_column": "Arctos username",
+        "registration_form_code_column": "Registration code",
         "about": "Updated information",
     }
     if scope.kind == "tournament":
@@ -301,6 +310,9 @@ def test_settings_verify_before_committing_other_fields(client, scope, monkeypat
     response = post_settings(client, scope, settings_payload(scope))
     assert response.status_code == 503
     assert calls[0]["enabled"] is True
+    assert calls[0]["code_column"] == "Registration code"
+    assert calls[0]["form_url"] == FORM_SETUP_URL
+    assert calls[0]["current_config"] is scope.config
     db.session.refresh(scope.entity)
     db.session.refresh(scope.config)
     assert scope.entity.about == before_about
@@ -341,6 +353,32 @@ def test_settings_require_boolean_choice_and_permission_before_provider(client, 
     assert post_settings(client, scope, data).status_code == 400
 
 
+def test_settings_accept_only_parsed_form_fields_and_server_owned_key(client, scope, monkeypatch):
+    calls = []
+
+    def validate(**values):
+        calls.append(values)
+        return Ok(FORM_FIELDS)
+
+    monkeypatch.setattr(RegistrationFormService, "validate_settings", staticmethod(validate))
+    login_as(client, scope.organizer)
+    response = post_settings(
+        client,
+        scope,
+        settings_payload(
+            scope,
+            registration_form_signing_key="client-supplied-key",
+            registration_form_entry_id="999999",
+            registration_form_sheet_id="client-supplied-sheet",
+        ),
+    )
+    assert response.status_code == 200
+    assert set(calls[0]) == {"enabled", "form_url", "sheet_url", "code_column", "current_config"}
+    assert calls[0]["current_config"] is scope.config
+    db.session.refresh(scope.config)
+    assert {key: getattr(scope.config, key) for key in FORM_FIELDS} == FORM_FIELDS
+
+
 def test_response_sheet_settings_are_organizer_only(client, scope):
     for user in (None, scope.player, scope.team):
         g.pop("_login_user", None)
@@ -353,13 +391,19 @@ def test_response_sheet_settings_are_organizer_only(client, scope):
         assert payload["registration_form_url"] == FORM_FIELDS["registration_form_url"]
         assert PRIVATE_KEYS.isdisjoint(payload)
         assert "private-response-sheet" not in str(payload)
+        assert FORM_FIELDS["registration_form_signing_key"] not in str(payload)
 
     login_as(client, scope.organizer)
     payload = client.get(scope.detail).get_json()[scope.kind]
     assert "private-response-sheet" in payload["registration_form_sheet_url"]
-    assert payload["registration_form_username_column"] == "Arctos username"
+    assert payload["registration_form_code_column"] == "Registration code"
+    assert payload["registration_form_url"] == FORM_SETUP_URL
+    assert "registration_form_entry_id" not in payload
+    assert "registration_form_signing_key" not in payload
+    assert FORM_FIELDS["registration_form_signing_key"] not in str(payload)
     listing = client.get("/_api/tournaments" if scope.kind == "tournament" else "/_api/leagues").get_json()
     assert "private-response-sheet" not in str(listing)
+    assert FORM_FIELDS["registration_form_signing_key"] not in str(listing)
 
     # User type is part of organizer identity even when the textual ID matches.
     matching_team = Team(id=scope.organizer.id, name="Unrelated team", pw_hash="test")
@@ -396,3 +440,98 @@ def test_league_event_inherits_public_requirement_and_rejects_event_settings(cli
     assert "league settings" in response.get_json()["error"]
     db.session.refresh(scope.config)
     assert scope.config.registration_form_url == FORM_FIELDS["registration_form_url"]
+
+
+def test_personal_form_requires_a_player_session(client, scope, monkeypatch):
+    def unexpected(*_):
+        pytest.fail("An unauthenticated or team request must not create a personal form link")
+
+    monkeypatch.setattr(RegistrationFormService, "personal_url", staticmethod(unexpected))
+    assert client.get(scope.form_url).status_code == 401
+    login_as(client, scope.team)
+    assert client.get(scope.form_url).status_code == 403
+
+
+def test_personal_form_uses_session_identity_without_contacting_google(client, scope, monkeypatch):
+    def unexpected(*_, **__):
+        pytest.fail("Opening a personalized form must not contact Google")
+
+    monkeypatch.setattr("requests.sessions.Session.request", unexpected)
+    locations = []
+    for user in (scope.player, scope.organizer):
+        login_as(client, user)
+        response = client.get(scope.form_url + "?player_id=another-player&username=another-player&entry.123456=forged")
+        assert response.status_code == 302
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Referrer-Policy"] == "no-referrer"
+        location = response.headers["Location"]
+        assert location == RegistrationFormService.personal_url(scope.config, user.id).unwrap()
+        parsed = urlsplit(location)
+        assert parsed.scheme == "https" and parsed.netloc == "docs.google.com"
+        assert parsed.path == "/forms/d/e/test-form/viewform"
+        query = parse_qs(parsed.query)
+        assert set(query) == {"usp", "entry.123456"}
+        assert query["entry.123456"][0].startswith("arctos_")
+        assert user.id not in location
+        assert FORM_FIELDS["registration_form_signing_key"] not in location
+        locations.append(location)
+    assert locations[0] != locations[1]
+    login_as(client, scope.player)
+    assert client.get(scope.form_url).headers["Location"] == locations[0]
+    assert PlayerRegistration.query.filter_by(**scope.registration_fields).count() == 0
+
+
+def test_personal_form_draft_requires_scope_organizer(client, scope):
+    scope.entity.published = False
+    db.session.commit()
+    login_as(client, scope.player)
+    assert client.get(scope.form_url).status_code == 403
+    login_as(client, scope.organizer)
+    assert client.get(scope.form_url).status_code == 302
+
+
+@pytest.mark.parametrize(
+    "field, value, status",
+    [
+        ("registration_form_url", None, 400),
+        ("registration_form_signing_key", None, 503),
+        ("registration_form_entry_id", None, 503),
+        ("registration_form_url", "https://example.test/form", 503),
+    ],
+)
+def test_personal_form_reports_disabled_or_incomplete_configuration(client, scope, field, value, status):
+    setattr(scope.config, field, value)
+    db.session.commit()
+    login_as(client, scope.player)
+    response = client.get(scope.form_url)
+    assert response.status_code == status
+    assert "Location" not in response.headers
+    assert "error" in response.get_json()
+
+
+def test_personal_form_missing_scope_returns_not_found(client, scope):
+    login_as(client, scope.player)
+    root = "/_api/tournaments" if scope.kind == "tournament" else "/_api/leagues"
+    assert client.get(root + "/missing/registration-form").status_code == 404
+
+
+@pytest.mark.parametrize("scope", ["league"], indirect=True)
+def test_event_personal_form_inherits_league_config_and_draft_permissions(client, scope):
+    event = Tournament(
+        url="form-link-league-round",
+        name="League Round",
+        league_id=scope.entity.url,
+        published=True,
+        start_date=datetime(2030, 1, 1),
+        end_date=datetime(2030, 1, 2),
+    )
+    db.session.add(event)
+    db.session.commit()
+    event_form = f"/_api/tournaments/{event.url}/registration-form"
+    login_as(client, scope.player)
+    assert client.get(event_form).headers["Location"] == client.get(scope.form_url).headers["Location"]
+    event.published = False
+    db.session.commit()
+    assert client.get(event_form).status_code == 403
+    login_as(client, scope.organizer)
+    assert client.get(event_form).status_code == 302

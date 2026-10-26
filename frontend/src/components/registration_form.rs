@@ -2,7 +2,7 @@ use crate::types::RegistrationFormConfig;
 use dioxus::prelude::*;
 
 #[component]
-pub fn RegistrationFormNotice(config: RegistrationFormConfig, username: Option<String>) -> Element {
+pub fn RegistrationFormNotice(config: RegistrationFormConfig, personal_url: Option<String>) -> Element {
     if !config.registration_form_required {
         return rsx! {};
     }
@@ -11,18 +11,16 @@ pub fn RegistrationFormNotice(config: RegistrationFormConfig, username: Option<S
         div { class: "alert alert-info mb-3",
             h3 { class: "h6", "Registration form required" }
             p { class: "mb-2",
-                if let Some(username) = username {
-                    "Complete the form using your Arctos username: "
-                    strong { "@{username}" }
-                    "."
+                if personal_url.is_some() {
+                    "Open your personal form link below. Your registration code is filled in automatically; leave it unchanged. Submit the form, then return here to register."
                 } else {
-                    "The player must complete the form using their Arctos username."
+                    "Ask the player to open their personal form link on the registration page for this event or league and submit the form."
                 }
                 " Arctos checks for a response before confirming registration."
             }
-            if let Some(url) = config.registration_form_url {
+            if let Some(url) = personal_url {
                 a { href: url, target: "_blank", rel: "noopener noreferrer",
-                    "Open registration form (opens in a new tab)"
+                    "Open my registration form (opens in a new tab)"
                 }
             }
         }
@@ -51,7 +49,7 @@ pub fn RegistrationFormSettings(
                 }
             }
             p { id: "registration-form-help", class: "form-text",
-                "Players complete the form with their exact Arctos username. Existing confirmed registrations remain valid."
+                "Players receive a personal form link with their registration code filled in. Existing confirmed registrations remain valid."
             }
             if config.registration_form_required {
                 if !config.registration_form_available {
@@ -59,8 +57,13 @@ pub fn RegistrationFormSettings(
                         "Form verification is unavailable. Contact the site administrator to configure Google Sheets access."
                     }
                 }
+                ol { class: "form-text",
+                    li { "Add a required short-answer question named “Arctos registration code” to your Google Form. Explain that Arctos fills it automatically and players should leave it unchanged." }
+                    li { "In Google Forms, choose Pre-fill form, enter ARCTOS_CODE for that question, then choose Get link and copy it." }
+                    li { "Publish the form for its intended players, link it to a response spreadsheet, and enter its details below." }
+                }
                 div { class: "mb-3",
-                    label { class: "form-label", r#for: "registration_form_url", "Google Form link" }
+                    label { class: "form-label", r#for: "registration_form_url", "Prefilled Google Form link" }
                     input {
                         class: "form-control", r#type: "url", id: "registration_form_url", required: true,
                         aria_describedby: "registration-form-url-help",
@@ -68,7 +71,7 @@ pub fn RegistrationFormSettings(
                         oninput: move |event| draft.write().registration_form_url = Some(event.value()),
                     }
                     div { id: "registration-form-url-help", class: "form-text",
-                        "Use the responder link that players open to complete the form."
+                        "Use the full docs.google.com link containing ARCTOS_CODE. Arctos replaces this placeholder for each player."
                     }
                 }
                 div { class: "mb-3",
@@ -91,18 +94,18 @@ pub fn RegistrationFormSettings(
                     }
                 }
                 div { class: "mb-3",
-                    label { class: "form-label", r#for: "registration_form_username_column", "Username column heading" }
+                    label { class: "form-label", r#for: "registration_form_code_column", "Registration code column heading" }
                     input {
-                        class: "form-control", r#type: "text", id: "registration_form_username_column", required: true,
+                        class: "form-control", r#type: "text", id: "registration_form_code_column", required: true,
                         aria_describedby: "registration-form-column-help",
-                        value: config.registration_form_username_column.unwrap_or_default(),
-                        oninput: move |event| draft.write().registration_form_username_column = Some(event.value()),
+                        value: config.registration_form_code_column.unwrap_or_default(),
+                        oninput: move |event| draft.write().registration_form_code_column = Some(event.value()),
                     }
                     div { id: "registration-form-column-help", class: "form-text",
-                        "Copy the column heading from the first row. The form must ask for the player's Arctos username with matching capitalization. A leading @ is optional."
+                        "Copy the first-row heading for the registration code question from the response tab."
                     }
                 }
-                p { class: "form-text mb-0", "Saving settings checks spreadsheet access and the username column." }
+                p { class: "form-text mb-0", "Saving checks spreadsheet access and the code column. After saving, use a player account to submit its personal form and complete registration to test the setup." }
             }
         }
     }

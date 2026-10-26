@@ -1,6 +1,6 @@
-"""Check a player's username in a privately shared Google response sheet.
+"""Connect personalized form links to a privately shared Google response sheet.
 
-Reads the first-row headings and selected username column. Response values
+Reads the first-row headings and selected registration-code column. Response values
 stay in a bounded process cache and are never written to the database or logs.
 """
 
@@ -8,13 +8,16 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+import hashlib
+import hmac
 import json
 from pathlib import Path
 import re
+import secrets
 from threading import Lock
 from time import monotonic
 from types import SimpleNamespace
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 from google.auth.exceptions import GoogleAuthError
 from google.auth.transport.requests import Request
@@ -33,11 +36,15 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 CACHE_SECONDS = 10
 MAPPING_CACHE_SECONDS = 60
 MAX_CACHE_ENTRIES = 32
+CODE_PLACEHOLDER = "ARCTOS_CODE"
+CODE_PURPOSE = "arctos-registration-form:v1:"
 CONFIG_FIELDS = (
     "registration_form_url",
+    "registration_form_entry_id",
     "registration_form_sheet_id",
     "registration_form_sheet_gid",
-    "registration_form_username_column",
+    "registration_form_code_column",
+    "registration_form_signing_key",
 )
 _response_cache: OrderedDict[tuple, tuple[float, frozenset[str]]] = OrderedDict()
 _mapping_cache: OrderedDict[tuple, tuple[float, str, str]] = OrderedDict()
@@ -68,13 +75,24 @@ def _google_url(value: object, hosts: tuple[str, ...]):
         return None
 
 
-def _form_url(value: object) -> Result[str, ArctosError]:
-    parsed = _google_url(value, ("docs.google.com", "forms.gle"))
-    if parsed is not None:
-        pattern = r"/[A-Za-z0-9_-]+/?" if parsed.netloc == "forms.gle" else r"/forms/d/(?:e/)?[A-Za-z0-9_-]+/viewform/?"
-        if re.fullmatch(pattern, parsed.path) is not None:
-            return Ok(f"https://{parsed.netloc}{parsed.path.rstrip('/')}")
-    return Err(ValidationError("Enter the Google Form's responder link (docs.google.com/forms or forms.gle)."))
+def _form_location(value: object) -> Result[tuple[str, str], ArctosError]:
+    """Extract one code question from Google's generated prefilled link."""
+    parsed = _google_url(value, ("docs.google.com",))
+    if parsed is None or re.fullmatch(r"/forms/d/(?:e/)?[A-Za-z0-9_-]+/viewform/?", parsed.path) is None:
+        return Err(ValidationError("Paste the full prefilled Google Form link from docs.google.com/forms."))
+    parameters = parse_qs(parsed.query, keep_blank_values=True)
+    entries = [
+        name
+        for name, values in parameters.items()
+        if re.fullmatch(r"entry\.[0-9]{1,20}", name) is not None and CODE_PLACEHOLDER in values
+    ]
+    if len(entries) != 1 or len(parameters[entries[0]]) != 1:
+        return Err(
+            ValidationError("Create a prefilled link with ARCTOS_CODE in exactly one registration-code question.")
+        )
+    # Keep only the form and code question; unrelated prefilled answers must
+    # never be copied into another player's personalized link.
+    return Ok((f"https://docs.google.com{parsed.path.rstrip('/')}", entries[0].removeprefix("entry.")))
 
 
 def _sheet_location(value: object) -> Result[tuple[str, int | None], ArctosError]:
@@ -96,9 +114,29 @@ def _sheet_location(value: object) -> Result[tuple[str, int | None], ArctosError
     return Ok((match[1], next(iter(numbers))))
 
 
-def _username(value: str) -> str:
-    value = value.strip()
-    return value[1:] if value.startswith("@") else value
+def _registration_code(config, player_id: str) -> Result[str, ArctosError]:
+    """Derive a stable, opaque code without storing a token for each player."""
+    parsed = _google_url(getattr(config, "registration_form_url", None), ("docs.google.com",))
+    entry_id = getattr(config, "registration_form_entry_id", None)
+    signing_key = getattr(config, "registration_form_signing_key", None)
+    if (
+        parsed is None
+        or re.fullmatch(r"/forms/d/(?:e/)?[A-Za-z0-9_-]+/viewform", parsed.path) is None
+        or parsed.query != ""
+        or parsed.fragment != ""
+        or not isinstance(entry_id, str)
+        or re.fullmatch(r"[0-9]{1,20}", entry_id) is None
+        or not isinstance(signing_key, str)
+        or re.fullmatch(r"[0-9a-f]{64}", signing_key) is None
+    ):
+        return Err(_unavailable())
+    message = (CODE_PURPOSE + player_id).encode("utf-8")
+    digest = hmac.new(bytes.fromhex(signing_key), message, hashlib.sha256).hexdigest()
+    return Ok("arctos_" + digest)
+
+
+def _prefilled_url(form_url: str, entry_id: str, value: str) -> str:
+    return form_url + "?" + urlencode({"usp": "pp_url", f"entry.{entry_id}": value})
 
 
 def _credentials() -> Result[Credentials, ArctosError]:
@@ -194,7 +232,7 @@ def _column_letter(index: int) -> str:
 
 @allow_Q
 def _sheet_column(session, config, deadline: float) -> Result[tuple[int, str, str], ArctosError]:
-    """Find the configured tab and its unique username heading."""
+    """Find the configured tab and its unique registration-code heading."""
     base_url = f"{SHEETS_URL}/{config.registration_form_sheet_id}"
     metadata = _get_json(session, base_url, {"fields": "sheets(properties(sheetId,title))"}, deadline).Q()
     sheets = metadata.get("sheets")
@@ -227,11 +265,13 @@ def _sheet_column(session, config, deadline: float) -> Result[tuple[int, str, st
     matches = [
         index
         for index, value in enumerate(headers)
-        if isinstance(value, str) and value.strip() == config.registration_form_username_column
+        if isinstance(value, str) and value.strip() == config.registration_form_code_column
     ]
     if len(matches) != 1:
         return Err(
-            ValidationError("The first row must contain exactly one column with the specified username heading.")
+            ValidationError(
+                "The first row must contain exactly one column with the specified registration-code heading."
+            )
         )
     return Ok((tab_id, sheet_name, _column_letter(matches[0])))
 
@@ -244,7 +284,7 @@ def _read_sheet(config, *, include_responses: bool) -> Result[tuple[int, frozens
         credentials,
         config.registration_form_sheet_id,
         config.registration_form_sheet_gid,
-        config.registration_form_username_column,
+        config.registration_form_code_column,
     )
     with requests.Session() as session:
         try:
@@ -290,19 +330,19 @@ def _read_sheet(config, *, include_responses: bool) -> Result[tuple[int, frozens
             not isinstance(heading, list)
             or len(heading) != 1
             or not isinstance(heading[0], str)
-            or heading[0].strip() != config.registration_form_username_column
+            or heading[0].strip() != config.registration_form_code_column
         ):
             with _cache_lock:
                 _mapping_cache.pop(key, None)
             return Err(_unavailable())
-        usernames = set()
+        codes = set()
         for row in rows[1:]:
             if not isinstance(row, list) or len(row) > 1:
                 return Err(_unavailable())
             if len(row) == 1:
                 if not isinstance(row[0], str):
                     return Err(_unavailable())
-                usernames.add(_username(row[0]))
+                codes.add(row[0].strip())
         # Cache mappings only after a complete, successful response read.
         if mapping is None:
             with _cache_lock:
@@ -310,7 +350,7 @@ def _read_sheet(config, *, include_responses: bool) -> Result[tuple[int, frozens
                 _mapping_cache.move_to_end(key)
                 while len(_mapping_cache) > MAX_CACHE_ENTRIES:
                     _mapping_cache.popitem(last=False)
-        return Ok((tab_id, frozenset(usernames)))
+        return Ok((tab_id, frozenset(codes)))
 
 
 @dataclass(frozen=True)
@@ -324,26 +364,53 @@ class RegistrationFormService:
         enabled: bool,
         form_url: object = "",
         sheet_url: object = "",
-        username_column: object = "",
+        code_column: object = "",
+        current_config=None,
     ) -> Result[dict[str, str | int | None], ArctosError]:
+        """Validate a complete setup and return changes for one atomic save."""
         if not enabled:
             return Ok(dict.fromkeys(CONFIG_FIELDS))
-        form = _form_url(form_url).Q()
+        form, entry_id = _form_location(form_url).Q()
         sheet_id, gid = _sheet_location(sheet_url).Q()
-        if not isinstance(username_column, str) or not 1 <= len(username_column.strip()) <= LONG_NAME_LEN:
-            return Err(ValidationError(f"Enter the username column's heading (up to {LONG_NAME_LEN} characters)."))
-        values = dict(zip(CONFIG_FIELDS, (form, sheet_id, gid, username_column.strip())))
+        if not isinstance(code_column, str) or not 1 <= len(code_column.strip()) <= LONG_NAME_LEN:
+            return Err(
+                ValidationError(f"Enter the registration-code column's heading (up to {LONG_NAME_LEN} characters).")
+            )
+        signing_key = getattr(current_config, "registration_form_signing_key", None)
+        if (
+            getattr(current_config, "registration_form_url", None) != form
+            or getattr(current_config, "registration_form_entry_id", None) != entry_id
+            or not isinstance(signing_key, str)
+            or re.fullmatch(r"[0-9a-f]{64}", signing_key) is None
+        ):
+            # A new form/question gets new codes. Sheet mapping corrections
+            # preserve existing responses, independently of Flask session keys.
+            signing_key = secrets.token_hex(32)
+        values = dict(zip(CONFIG_FIELDS, (form, entry_id, sheet_id, gid, code_column.strip(), signing_key)))
         tab_id, _ = _read_sheet(SimpleNamespace(**values), include_responses=False).Q()
         values["registration_form_sheet_gid"] = tab_id
         return Ok(values)
 
     @staticmethod
+    @allow_Q
+    def personal_url(config, player_id: str) -> Result[str, ArctosError]:
+        """Build a player's link; callers must authorize access to that player."""
+        form_url = getattr(config, "registration_form_url", None)
+        if form_url in (None, ""):
+            return Err(ValidationError("A registration form is not required."))
+        code = _registration_code(config, player_id).Q()
+        return Ok(_prefilled_url(form_url, config.registration_form_entry_id, code))
+
+    @staticmethod
+    @allow_Q
     def require_response(config, player_id: str) -> Result[None, ArctosError]:
+        """Require the target player's code before creating or confirming registration."""
         if config is None or getattr(config, "registration_form_url", None) in (None, ""):
             return Ok(None)
+        code = _registration_code(config, player_id).Q()
         sheet_id = getattr(config, "registration_form_sheet_id", None)
         gid = getattr(config, "registration_form_sheet_gid", None)
-        column = getattr(config, "registration_form_username_column", None)
+        column = getattr(config, "registration_form_code_column", None)
         if (
             not isinstance(sheet_id, str)
             or re.fullmatch(r"[A-Za-z0-9_-]{1,255}", sheet_id) is None
@@ -365,21 +432,21 @@ class RegistrationFormService:
                 if monotonic() - stored_at >= CACHE_SECONDS:
                     del _response_cache[expired_key]
             cached = _response_cache.get(key)
-            usernames = cached[1] if cached is not None else None
-        if usernames is None:
+            codes = cached[1] if cached is not None else None
+        if codes is None:
             match _read_sheet(config, include_responses=True):
                 case Err(_):
                     return Err(_unavailable())
-                case Ok((_, usernames)):
+                case Ok((_, codes)):
                     with _cache_lock:
-                        _response_cache[key] = (monotonic(), usernames)
+                        _response_cache[key] = (monotonic(), codes)
                         _response_cache.move_to_end(key)
                         while len(_response_cache) > MAX_CACHE_ENTRIES:
                             _response_cache.popitem(last=False)
-        if player_id not in usernames:
+        if code not in codes:
             return Err(
                 ValidationError(
-                    f"No form response was found for @{player_id}. Complete the registration form, "
+                    f"No form response was found for @{player_id}. Open the player's personalized form link and submit it, "
                     "then try again. Recent responses can take a few seconds to appear."
                 )
             )
@@ -392,6 +459,7 @@ class RegistrationFormService:
 
     @staticmethod
     def organizer_config(config) -> dict:
+        """Return editable setup and connection details without signing material."""
         sheet_id = getattr(config, "registration_form_sheet_id", None)
         gid = getattr(config, "registration_form_sheet_gid", None)
         sheet_url = (
@@ -403,9 +471,13 @@ class RegistrationFormService:
         match _credentials():
             case Ok(credentials):
                 email = credentials.service_account_email
+        form_url = getattr(config, "registration_form_url", None)
+        entry_id = getattr(config, "registration_form_entry_id", None)
+        setup_url = _prefilled_url(form_url, entry_id, CODE_PLACEHOLDER) if form_url and entry_id else None
         return {
+            "registration_form_url": setup_url,
             "registration_form_sheet_url": sheet_url,
-            "registration_form_username_column": getattr(config, "registration_form_username_column", None),
+            "registration_form_code_column": getattr(config, "registration_form_code_column", None),
             "registration_form_service_account_email": email,
             "registration_form_available": email is not None,
         }

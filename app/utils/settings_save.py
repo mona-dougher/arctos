@@ -155,7 +155,7 @@ def _registration_form_changes(data, config, *, kind):
         "registration_form_required",
         "registration_form_url",
         "registration_form_sheet_url",
-        "registration_form_username_column",
+        "registration_form_code_column",
     }
     if not keys.intersection(data):
         return {}
@@ -174,7 +174,8 @@ def _registration_form_changes(data, config, *, kind):
         enabled=enabled,
         form_url=data.get("registration_form_url", ""),
         sheet_url=data.get("registration_form_sheet_url", ""),
-        username_column=data.get("registration_form_username_column", ""),
+        code_column=data.get("registration_form_code_column", ""),
+        current_config=config,
     )
     match result:
         case Ok(changes):

@@ -1,8 +1,8 @@
-"""Response checks use exact account IDs and keep private sheet data private."""
+"""Personalized links identify responses without exposing other account data."""
 
 import json
 from types import SimpleNamespace
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 import requests
@@ -47,10 +47,12 @@ def clear_cache():
 @pytest.fixture
 def config():
     return SimpleNamespace(
-        registration_form_url="https://forms.gle/Form123",
+        registration_form_url="https://docs.google.com/forms/d/e/Form123/viewform",
+        registration_form_entry_id="123",
+        registration_form_signing_key="12" * 32,
         registration_form_sheet_id="Sheet_123",
         registration_form_sheet_gid=0,
-        registration_form_username_column="Arctos username",
+        registration_form_code_column="Arctos registration code",
     )
 
 
@@ -82,15 +84,15 @@ def google(monkeypatch):
 
     monkeypatch.setattr(forms.requests, "Session", Session)
 
-    def sheet(usernames=(), *, title="Form Responses 1", gid=0, headers=None, include_responses=True):
+    def sheet(codes=(), *, title="Form Responses 1", gid=0, headers=None, include_responses=True):
         queued.extend(
             [
                 Response({"sheets": [{"properties": {"sheetId": gid, "title": title}}]}),
-                Response({"values": [headers if headers is not None else ["Timestamp", "Arctos username"]]}),
+                Response({"values": [headers if headers is not None else ["Timestamp", "Arctos registration code"]]}),
             ]
         )
         if include_responses:
-            queued.append(Response({"values": [["Arctos username"], *[[value] for value in usernames]]}))
+            queued.append(Response({"values": [["Arctos registration code"], *[[value] for value in codes]]}))
 
     return SimpleNamespace(queued=queued, calls=calls, sheet=sheet, credentials=credentials)
 
@@ -102,6 +104,11 @@ def error(result, status):
     return value.message
 
 
+def code(config, player_id="Alice"):
+    url = Service.personal_url(config, player_id).unwrap()
+    return parse_qs(urlsplit(url).query)[f"entry.{config.registration_form_entry_id}"][0]
+
+
 def test_disabled_requirement_does_not_load_credentials(monkeypatch):
     def unexpected():
         pytest.fail("Disabled requirements must not access Google credentials")
@@ -110,6 +117,7 @@ def test_disabled_requirement_does_not_load_credentials(monkeypatch):
     assert Service.require_response(None, "Alice").is_ok()
     assert Service.require_response(SimpleNamespace(registration_form_url=None), "Alice").is_ok()
     assert Service.validate_settings(enabled=False).unwrap() == dict.fromkeys(forms.CONFIG_FIELDS)
+    error(Service.personal_url(None, "Alice"), 400)
 
 
 @pytest.mark.parametrize(
@@ -121,6 +129,8 @@ def test_disabled_requirement_does_not_load_credentials(monkeypatch):
         "https://user:password@docs.google.com/forms/d/e/Form/viewform",  # pragma: allowlist secret
         "https://docs.google.com:443/forms/d/e/Form/viewform",
         "https://docs.google.com/forms/d/e/Form/edit",
+        "https://docs.google.com/forms/d/e/Form/viewform",
+        "https://forms.gle/ABC",
         "https://forms.gle/path/extra",
         "https://forms.gle/a\nb",
         None,
@@ -130,6 +140,107 @@ def test_disabled_requirement_does_not_load_credentials(monkeypatch):
 def test_invalid_form_links_are_rejected_before_network(google, url):
     error(Service.validate_settings(enabled=True, form_url=url), 400)
     assert google.calls == []
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        "entry.123=Alice",
+        "entry.other=ARCTOS_CODE",
+        "entry.123=ARCTOS_CODE&entry.456=ARCTOS_CODE",
+        "entry.123=ARCTOS_CODE&entry.123=ARCTOS_CODE",
+        "entry.123=ARCTOS_CODE&entry.123=another-answer",
+        "entry.123=",
+        "usp=ARCTOS_CODE",
+    ],
+)
+def test_ambiguous_or_missing_code_questions_are_rejected(google, parameters):
+    url = "https://docs.google.com/forms/d/e/Form/viewform?" + parameters
+    error(Service.validate_settings(enabled=True, form_url=url), 400)
+    assert google.calls == []
+
+
+def test_setup_discards_unrelated_prefilled_answers(google):
+    google.sheet(include_responses=False)
+    values = Service.validate_settings(
+        enabled=True,
+        form_url="https://docs.google.com/forms/d/e/Form/viewform?entry.123=ARCTOS_CODE&entry.456=private-answer&emailAddress=person%40example.com",
+        sheet_url="https://docs.google.com/spreadsheets/d/Sheet/edit#gid=0",
+        code_column="Arctos registration code",
+    ).unwrap()
+    saved = SimpleNamespace(**values)
+    personal = Service.personal_url(saved, "Alice").unwrap()
+    assert set(parse_qs(urlsplit(personal).query)) == {"usp", "entry.123"}
+    assert "private-answer" not in personal and "example.com" not in personal
+    setup = Service.organizer_config(saved)["registration_form_url"]
+    assert setup.endswith("?usp=pp_url&entry.123=ARCTOS_CODE")
+
+
+def test_personal_codes_are_stable_and_scoped_to_player_and_config(google, config):
+    first = code(config)
+    assert code(config) == first
+    assert len(first) == 71 and first.startswith("arctos_")
+    assert "Alice" not in first
+    assert code(config, "alice") != first
+    assert code(config, "Bob") != first
+    other_config = SimpleNamespace(**vars(config))
+    other_config.registration_form_signing_key = "34" * 32
+    assert code(other_config) != first
+    assert google.calls == []
+
+
+def test_sheet_mapping_corrections_preserve_existing_player_codes(google, config):
+    google.sheet(gid=8, headers=["New code heading"], include_responses=False)
+    values = Service.validate_settings(
+        enabled=True,
+        form_url=Service.organizer_config(config)["registration_form_url"],
+        sheet_url="https://docs.google.com/spreadsheets/d/CorrectedSheet/edit#gid=8",
+        code_column="New code heading",
+        current_config=config,
+    ).unwrap()
+    assert values["registration_form_signing_key"] == config.registration_form_signing_key
+    assert code(SimpleNamespace(**values)) == code(config)
+
+
+@pytest.mark.parametrize(
+    "form_url",
+    [
+        "https://docs.google.com/forms/d/e/DifferentForm/viewform?entry.123=ARCTOS_CODE",
+        "https://docs.google.com/forms/d/e/Form123/viewform?entry.456=ARCTOS_CODE",
+    ],
+)
+def test_changing_form_or_question_rotates_player_codes(google, config, form_url):
+    google.sheet(include_responses=False)
+    before = vars(config).copy()
+    values = Service.validate_settings(
+        enabled=True,
+        form_url=form_url,
+        sheet_url="https://docs.google.com/spreadsheets/d/Sheet_123/edit#gid=0",
+        code_column=config.registration_form_code_column,
+        current_config=config,
+    ).unwrap()
+    assert values["registration_form_signing_key"] != config.registration_form_signing_key
+    assert code(SimpleNamespace(**values)) != code(config)
+    assert vars(config) == before
+
+
+def test_invalid_setup_leaves_current_config_untouched(google, config):
+    google.sheet(headers=[], include_responses=False)
+    before = vars(config).copy()
+    error(
+        Service.validate_settings(
+            enabled=True,
+            form_url=Service.organizer_config(config)["registration_form_url"],
+            sheet_url="https://docs.google.com/spreadsheets/d/Sheet_123/edit#gid=0",
+            code_column=config.registration_form_code_column,
+            current_config=config,
+        ),
+        400,
+    )
+    assert vars(config) == before
+    assert Service.validate_settings(enabled=False, current_config=config).unwrap() == dict.fromkeys(
+        forms.CONFIG_FIELDS
+    )
 
 
 @pytest.mark.parametrize(
@@ -147,7 +258,10 @@ def test_invalid_form_links_are_rejected_before_network(google, url):
 def test_invalid_sheet_links_are_rejected_before_network(google, url):
     error(
         Service.validate_settings(
-            enabled=True, form_url="https://forms.gle/ABC", sheet_url=url, username_column="Arctos username"
+            enabled=True,
+            form_url="https://docs.google.com/forms/d/e/Form123/viewform?entry.123=ARCTOS_CODE",
+            sheet_url=url,
+            code_column="Arctos registration code",
         ),
         400,
     )
@@ -166,35 +280,42 @@ def test_settings_resolve_tab_and_read_only_header(google, sheet_url, gid):
     google.sheet(gid=gid, include_responses=False)
     result = Service.validate_settings(
         enabled=True,
-        form_url=" https://docs.google.com/forms/d/e/FormABC/viewform?usp=sharing ",
+        form_url=" https://docs.google.com/forms/d/e/FormABC/viewform?usp=pp_url&entry.123=ARCTOS_CODE ",
         sheet_url=sheet_url,
-        username_column=" Arctos username ",
+        code_column=" Arctos registration code ",
     ).unwrap()
+    signing_key = result.pop("registration_form_signing_key")
+    assert len(bytes.fromhex(signing_key)) == 32
     assert result == {
         "registration_form_url": "https://docs.google.com/forms/d/e/FormABC/viewform",
+        "registration_form_entry_id": "123",
         "registration_form_sheet_id": "Sheet_123",
         "registration_form_sheet_gid": gid,
-        "registration_form_username_column": "Arctos username",
+        "registration_form_code_column": "Arctos registration code",
     }
     assert len(google.calls) == 2
 
 
-@pytest.mark.parametrize("header", [["Email"], ["Arctos username", " Arctos username "], []])
+@pytest.mark.parametrize("header", [["Email"], ["Arctos registration code", " Arctos registration code "], []])
 def test_heading_must_be_unique_in_first_row(google, header):
     google.sheet(headers=header, include_responses=False)
     error(
         Service.validate_settings(
             enabled=True,
-            form_url="https://forms.gle/ABC",
+            form_url="https://docs.google.com/forms/d/e/Form123/viewform?entry.123=ARCTOS_CODE",
             sheet_url="https://docs.google.com/spreadsheets/d/Sheet/edit#gid=0",
-            username_column="Arctos username",
+            code_column="Arctos registration code",
         ),
         400,
     )
 
 
-def test_username_only_read_escapes_tab_title_and_bounds_transport(google, config):
-    google.sheet([" @Alice ", "bob"], title="Players' answers", headers=["Private"] * 26 + ["Arctos username"])
+def test_code_only_read_escapes_tab_title_and_bounds_transport(google, config):
+    google.sheet(
+        [" " + code(config) + " ", code(config, "bob")],
+        title="Players' answers",
+        headers=["Private"] * 26 + ["Arctos registration code"],
+    )
     assert Service.require_response(config, "Alice").is_ok()
     urls = [unquote(call[0]) for call in google.calls]
     assert urls == [
@@ -209,10 +330,35 @@ def test_username_only_read_escapes_tab_title_and_bounds_transport(google, confi
         assert headers["Authorization"] == "Bearer private-test-token"
 
 
-@pytest.mark.parametrize("value", ["alice", "xAlicex", "Alice@example.com", "@@Alice", "@ Alice", ""])
-def test_only_exact_case_sensitive_username_matches(google, config, value):
+@pytest.mark.parametrize("value", ["Alice", "alice", "@Alice", "Alice@example.com", "ARCTOS_CODE", ""])
+def test_username_and_placeholder_values_cannot_confirm_registration(google, config, value):
     google.sheet([value])
     assert "No form response" in error(Service.require_response(config, "Alice"), 400)
+
+
+@pytest.mark.parametrize("kind", ["other_player", "other_config", "uppercase", "substring"])
+def test_only_the_complete_target_player_code_can_confirm_registration(google, config, kind):
+    value = code(config)
+    if kind == "other_player":
+        value = code(config, "Bob")
+    elif kind == "other_config":
+        other_config = SimpleNamespace(**vars(config))
+        other_config.registration_form_signing_key = "34" * 32
+        value = code(other_config)
+    elif kind == "uppercase":
+        value = value.upper()
+    else:
+        value = "prefix" + value
+    google.sheet([value])
+    error(Service.require_response(config, "Alice"), 400)
+
+
+def test_rotated_key_does_not_accept_old_cached_response(google, config):
+    google.sheet([code(config)])
+    assert Service.require_response(config, "Alice").is_ok()
+    config.registration_form_signing_key = "34" * 32
+    error(Service.require_response(config, "Alice"), 400)
+    assert len(google.calls) == 3
 
 
 def test_missing_response_cache_expires_and_a_new_response_is_found(google, config, monkeypatch):
@@ -223,7 +369,7 @@ def test_missing_response_cache_expires_and_a_new_response_is_found(google, conf
     error(Service.require_response(config, "Alice"), 400)
     assert len(google.calls) == 3
     clock[0] = forms.CACHE_SECONDS
-    google.queued.append(Response({"values": [["Arctos username"], ["Alice"]]}))
+    google.queued.append(Response({"values": [["Arctos registration code"], [code(config)]]}))
     assert Service.require_response(config, "Alice").is_ok()
     assert len(google.calls) == 4
 
@@ -232,7 +378,7 @@ def test_cached_responses_are_scoped_and_bounded(google, config, monkeypatch):
     monkeypatch.setattr(forms, "MAX_CACHE_ENTRIES", 2)
     for sheet_id in ("one", "two", "three"):
         config.registration_form_sheet_id = sheet_id
-        google.sheet(["Alice"] if sheet_id == "one" else [])
+        google.sheet([code(config)] if sheet_id == "one" else [])
         result = Service.require_response(config, "Alice")
         assert result.is_ok() == (sheet_id == "one")
     assert len(forms._response_cache) == 2
@@ -242,14 +388,14 @@ def test_cached_responses_are_scoped_and_bounded(google, config, monkeypatch):
 def test_moved_column_cannot_confirm_from_cached_mapping(google, config, monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(forms, "monotonic", lambda: clock[0])
-    google.sheet(["Alice"])
+    google.sheet([code(config)])
     assert Service.require_response(config, "Alice").is_ok()
     clock[0] = forms.CACHE_SECONDS
-    google.queued.append(Response({"values": [["Email"], ["Alice"]]}))
+    google.queued.append(Response({"values": [["Email"], [code(config)]]}))
     error(Service.require_response(config, "Alice"), 503)
     assert len(forms._mapping_cache) == 0
     assert len(forms._response_cache) == 0
-    google.sheet(["Alice"], headers=["Timestamp", "Email", "Arctos username"])
+    google.sheet([code(config)], headers=["Timestamp", "Email", "Arctos registration code"])
     assert Service.require_response(config, "Alice").is_ok()
     assert unquote(google.calls[-1][0]).endswith("!C1:C")
 
@@ -257,19 +403,19 @@ def test_moved_column_cannot_confirm_from_cached_mapping(google, config, monkeyp
 def test_mapping_expires_and_settings_validation_always_reads_current_header(google, config, monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(forms, "monotonic", lambda: clock[0])
-    google.sheet(["Alice"])
+    google.sheet([code(config)])
     assert Service.require_response(config, "Alice").is_ok()
     clock[0] = forms.MAPPING_CACHE_SECONDS
-    google.sheet(["Alice"])
+    google.sheet([code(config)])
     assert Service.require_response(config, "Alice").is_ok()
     assert len(google.calls) == 6
-    google.sheet(headers=["Arctos username", "Arctos username"], include_responses=False)
+    google.sheet(headers=["Arctos registration code", "Arctos registration code"], include_responses=False)
     error(
         Service.validate_settings(
             enabled=True,
-            form_url=config.registration_form_url,
+            form_url=Service.organizer_config(config)["registration_form_url"],
             sheet_url="https://docs.google.com/spreadsheets/d/Sheet_123/edit#gid=0",
-            username_column=config.registration_form_username_column,
+            code_column=config.registration_form_code_column,
         ),
         400,
     )
@@ -277,7 +423,7 @@ def test_mapping_expires_and_settings_validation_always_reads_current_header(goo
 
 
 def test_credential_change_cannot_reuse_previous_accounts_responses(google, config, monkeypatch):
-    google.sheet(["Alice"])
+    google.sheet([code(config)])
     assert Service.require_response(config, "Alice").is_ok()
     other_credentials = FakeCredentials()
     monkeypatch.setattr(forms, "_credentials", lambda: Ok(other_credentials))
@@ -287,8 +433,8 @@ def test_credential_change_cannot_reuse_previous_accounts_responses(google, conf
 
 
 def test_heading_whitespace_is_consistent_during_mapping_and_values_read(google, config):
-    google.sheet(headers=[" Arctos username "], include_responses=False)
-    google.queued.append(Response({"values": [[" Arctos username "], ["Alice"]]}))
+    google.sheet(headers=[" Arctos registration code "], include_responses=False)
+    google.queued.append(Response({"values": [[" Arctos registration code "], [code(config)]]}))
     assert Service.require_response(config, "Alice").is_ok()
 
 
@@ -311,7 +457,7 @@ def test_upstream_errors_are_unavailable_private_and_not_cached(google, config, 
     message = error(Service.require_response(config, "Alice"), 503)
     assert "private sheet data" not in message
     assert len(forms._response_cache) == 0
-    google.sheet(["Alice"])
+    google.sheet([code(config)])
     assert Service.require_response(config, "Alice").is_ok()
 
 
@@ -331,11 +477,12 @@ def test_unknown_tab_does_not_read_other_tabs(google, config):
 def test_serializer_helpers_separate_public_and_organizer_details(google, config):
     assert Service.public_config(config) == {
         "registration_form_required": True,
-        "registration_form_url": "https://forms.gle/Form123",
+        "registration_form_url": "https://docs.google.com/forms/d/e/Form123/viewform",
     }
     assert Service.organizer_config(config) == {
+        "registration_form_url": "https://docs.google.com/forms/d/e/Form123/viewform?usp=pp_url&entry.123=ARCTOS_CODE",
         "registration_form_sheet_url": "https://docs.google.com/spreadsheets/d/Sheet_123/edit#gid=0",
-        "registration_form_username_column": "Arctos username",
+        "registration_form_code_column": "Arctos registration code",
         "registration_form_service_account_email": google.credentials.service_account_email,
         "registration_form_available": True,
     }
@@ -421,7 +568,13 @@ def test_credential_file_reload_keeps_scope_readonly_and_token_host_fixed(app, m
         ("registration_form_sheet_id", "../different"),
         ("registration_form_sheet_gid", None),
         ("registration_form_sheet_gid", True),
-        ("registration_form_username_column", None),
+        ("registration_form_code_column", None),
+        ("registration_form_entry_id", None),
+        ("registration_form_entry_id", "123&entry.456=other"),
+        ("registration_form_signing_key", None),
+        ("registration_form_signing_key", "not-a-key"),
+        ("registration_form_url", "https://example.com/form"),
+        ("registration_form_url", "https://docs.google.com/forms/d/e/Form/viewform?entry.1=other"),
     ],
 )
 def test_incomplete_stored_config_is_unavailable_without_remote_calls(google, config, field, value):

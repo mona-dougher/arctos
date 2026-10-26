@@ -23,13 +23,13 @@ from urllib.parse import parse_qs, urlsplit
 from playwright.async_api import Page, Route, async_playwright, expect
 
 from check_appearance_ui import PALETTES, check_contrast, choose, close_menu
-from check_mobile_ui import DEMO_USER, SmokeCheck, TIMEOUT_MS, api_json, arguments
+from check_mobile_ui import SmokeCheck, TIMEOUT_MS, api_json, arguments
 
-FORM_URL = "https://docs.google.com/forms/d/e/browser-fixture/viewform"
+FORM_URL = "https://docs.google.com/forms/d/e/browser-fixture/viewform?usp=pp_url&entry.123=ARCTOS_CODE"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/browser-fixture/edit#gid=0"
 SERVICE_ACCOUNT = "registration-response-reader@arctos-browser-check.iam.gserviceaccount.com"
 SETTINGS_ERROR = "The registration form could not be checked. Please try again shortly or contact an organizer."
-MISSING_ERROR = "No form response was found for your Arctos username. Complete the registration form, then try again."
+MISSING_ERROR = "No form response was found. Open your personal registration form, submit it, then try again."
 SCOPES = (
     (
         "event",
@@ -98,7 +98,7 @@ class FormFixtures:
                 registration_form_required=self.required,
                 registration_form_url=FORM_URL,
                 registration_form_sheet_url=SHEET_URL,
-                registration_form_username_column="Arctos username",
+                registration_form_code_column="Arctos registration code",
                 registration_form_service_account_email=SERVICE_ACCOUNT,
                 registration_form_available=self.available,
                 player_registration_open=True,
@@ -143,9 +143,9 @@ class FormFixtures:
 
 async def assert_labeled_controls(page: Page):
     for label, field in (
-        ("Google Form link", "registration_form_url"),
+        ("Prefilled Google Form link", "registration_form_url"),
         ("Response spreadsheet link", "registration_form_sheet_url"),
-        ("Username column heading", "registration_form_username_column"),
+        ("Registration code column heading", "registration_form_code_column"),
     ):
         control = page.get_by_label(label, exact=True)
         await expect(control).to_have_attribute("id", field)
@@ -165,21 +165,26 @@ async def settings_flow(check: SmokeCheck, page: Page, fixtures: FormFixtures, s
     await expect(page.locator("#registration_form_url")).to_have_count(0)
     await enabled.check()
     await assert_labeled_controls(page)
-    await page.get_by_label("Google Form link", exact=True).fill(FORM_URL)
+    await page.get_by_label("Prefilled Google Form link", exact=True).fill(FORM_URL)
     await page.get_by_label("Response spreadsheet link", exact=True).fill(SHEET_URL)
-    await page.get_by_label("Username column heading", exact=True).fill("Player Arctos username")
+    await page.get_by_label("Registration code column heading", exact=True).fill("Arctos registration code")
     await page.locator("#about").fill("Retain this organizer draft.")
     await expect(page.get_by_text(SERVICE_ACCOUNT, exact=True)).to_be_visible()
     await expect(page.get_by_text("as a Viewer. Keep general access Restricted.", exact=False)).to_be_visible()
     await enabled.uncheck()
     await expect(page.locator("#registration_form_url")).to_have_count(0)
     await enabled.check()
-    await expect(page.get_by_label("Username column heading", exact=True)).to_have_value("Player Arctos username")
+    await expect(page.get_by_label("Registration code column heading", exact=True)).to_have_value(
+        "Arctos registration code"
+    )
     await check.check_layout(page, f"forms-{kind}-settings", width)
     await check.screenshot(page, f"forms-{kind}-settings", width)
     if check.screenshots:
         await page.get_by_role("group", name="Registration form", exact=True).screenshot(
-            path=str(check.screenshots / f"{width:04d}-forms-{kind}-settings-section.png"), animations="disabled"
+            path=str(check.screenshots / f"{width:04d}-forms-{kind}-settings-section.png"),
+            animations="disabled",
+            # Keep the sticky navigation outside this isolated component crop.
+            style=".app-header { visibility: hidden; }",
         )
 
     count = len(fixtures.writes)
@@ -196,13 +201,15 @@ async def settings_flow(check: SmokeCheck, page: Page, fixtures: FormFixtures, s
     fixtures.release.set()
     await expect(page.locator("#settings-save-error")).to_contain_text(SETTINGS_ERROR)
     await expect(page.locator("#about")).to_have_value("Retain this organizer draft.")
-    await expect(page.get_by_label("Username column heading", exact=True)).to_have_value("Player Arctos username")
+    await expect(page.get_by_label("Registration code column heading", exact=True)).to_have_value(
+        "Arctos registration code"
+    )
     path, values = fixtures.writes[-1]
     assert path == save_path
     assert values["registration_form_required"] in ("true", True)
     assert values["registration_form_url"] == FORM_URL
     assert values["registration_form_sheet_url"] == SHEET_URL
-    assert values["registration_form_username_column"] == "Player Arctos username"
+    assert values["registration_form_code_column"] == "Arctos registration code"
     await enabled.uncheck()
     fixtures.status = 200
     await save.click()
@@ -218,9 +225,9 @@ async def registration_flow(check: SmokeCheck, page: Page, fixtures: FormFixture
     notice = page.locator(".alert").filter(
         has=page.get_by_role("heading", name="Registration form required", exact=True)
     )
-    await expect(notice).to_contain_text(f"@{DEMO_USER}")
-    link = notice.get_by_role("link", name="Open registration form (opens in a new tab)", exact=True)
-    await expect(link).to_have_attribute("href", FORM_URL)
+    await expect(notice).to_contain_text("Your registration code is filled in automatically")
+    link = notice.get_by_role("link", name="Open my registration form (opens in a new tab)", exact=True)
+    await expect(link).to_have_attribute("href", check.base_url + scope[2] + "/registration-form")
     await expect(link).to_have_attribute("target", "_blank")
     assert {"noopener", "noreferrer"}.issubset(set((await link.get_attribute("rel")).split()))
     assert "Response spreadsheet" not in await page.locator("main").inner_text()
@@ -273,10 +280,10 @@ async def pending_editor_flow(check: SmokeCheck, page: Page, fixtures: FormFixtu
     await page.get_by_role("button", name="Edit registration", exact=True).click()
     dialog = page.get_by_role("dialog", name="Edit player registration", exact=True)
     await expect(dialog.get_by_role("heading", name="Registration form required", exact=True)).to_be_visible()
-    await expect(dialog).to_contain_text(f"@{DEMO_USER}")
+    await expect(dialog).to_contain_text("Your registration code is filled in automatically")
     await expect(
-        dialog.get_by_role("link", name="Open registration form (opens in a new tab)", exact=True)
-    ).to_have_attribute("href", FORM_URL)
+        dialog.get_by_role("link", name="Open my registration form (opens in a new tab)", exact=True)
+    ).to_have_attribute("href", check.base_url + scope[2] + "/registration-form")
     await dialog.locator("#edit-jersey-name").fill("Retain pending draft")
     await dialog.locator("#edit-registration-team").select_option("")
     await dialog.get_by_role("button", name="Save changes", exact=True).click()

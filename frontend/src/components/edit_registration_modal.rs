@@ -212,7 +212,6 @@ fn EditPlayerRegistrationContent(
     let mut current_team_name = use_signal(|| "".to_string());
     let mut status = use_signal(|| "".to_string());
     let mut registration_form = use_signal(RegistrationFormConfig::default);
-    let account = crate::auth::use_account();
     let mut teams = use_signal(|| vec![]);
     let mut waiver_required = use_signal(|| false);
     let mut waiver_signature_valid = use_signal(|| false);
@@ -352,9 +351,11 @@ fn EditPlayerRegistrationContent(
                 onsubmit: onsubmit,
                 aria_busy: mutation() != RegistrationMutation::Idle,
                 if status() == "PENDING_TEAM_APPROVAL" {
-                    if let Some(Ok(user)) = account.read().as_ref() {
-                        RegistrationFormNotice { config: registration_form(), username: user.id.clone() }
-                    }
+                    RegistrationFormNotice { config: registration_form(), personal_url: match &context {
+                        EditRegistrationContext::Tournament { tournament_url } => format!("{}/_api/tournaments/{}/registration-form", api::base_url(), urlencoding::encode(tournament_url)),
+                        EditRegistrationContext::League { league_url } => format!("{}/_api/leagues/{}/registration-form", api::base_url(), urlencoding::encode(league_url)),
+                    } }
+
                 }
                 fieldset { disabled: mutation() != RegistrationMutation::Idle,
                 div { class: "mb-3",

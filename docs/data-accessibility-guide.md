@@ -19,10 +19,12 @@ owner changes or removes them.
 ## Registration forms
 
 An event or league's form requirement and responder link are public. The
-response spreadsheet link, tab, and username heading are visible only to its
-authorized organizers. Arctos checks the configured username column and
+response spreadsheet link, tab, and registration code heading are visible only to its
+authorized organizers. Arctos checks the configured registration code column and
 returns registration eligibility without publishing spreadsheet rows.
-The organizer controls access to the form responses in Google Sheets.
+Each signed-in player opens their own personalized form link. The configuration's
+private signing key remains on the server. The organizer controls access to the
+form responses in Google Sheets.
 
 ## Injuries
  

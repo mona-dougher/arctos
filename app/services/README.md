@@ -23,6 +23,30 @@ The registration service provides the following key methods:
 - **`register_player_as_to(tournament_url, *, actor_user_id, actor_user_type, player_id, team_id=None, ...)`** — Register a player on behalf of a TO. The actor must be a TO for the tournament. Always returns a `CONFIRMED`, fully-paid `PlayerRegistration` with `paid=True, amount_paid=0`. Existing `CANCELLED`/`REJECTED` registrations for the same (tournament, player) are reused; existing `CONFIRMED` rows return a duplicate-error.
 - **`register_team_as_to(tournament_url, *, actor_user_id, actor_user_type, team_id, pseudonym="")`** - Register a team on behalf of a TO. The actor must be a TO for the tournament. Returns a CONFIRMED, fully-paid `TeamRegistration` with `paid=True, amount_paid=0`. Honors `n_max_teams` (error message includes the count and limit). Existing `CANCELLED` rows for the same (tournament, team) are reused; existing `CONFIRMED` rows return a duplicate-error.
 
+## `RegistrationFormService` methods
+
+Registration forms use the effective `RegistrableConfig`: a standalone
+tournament's configuration or its parent league's configuration.
+
+- **`validate_settings(..., current_config=config)`** checks the organizer's
+  prefilled Form link and private response Sheet. It returns all configuration
+  fields for an atomic settings save. A form or code-question change generates
+  a new private signing key; Sheet mapping corrections preserve it.
+- **`personal_url(config, player_id)`** builds a prefilled link containing a
+  stable, opaque player code. Routes authorize the player before returning
+  this link. It does not contact Google.
+- **`require_response(config, player_id)`** checks for the target player's code
+  in the selected response column. Registration and pending-confirmation
+  workflows call it before changing records. Missing responses return a
+  validation error; unavailable checks return a temporary service error.
+- **`public_config(config)`** and **`organizer_config(config)`** provide their
+  respective views of configuration. Neither exposes the signing key.
+
+Each configuration has a random key. HMAC-SHA256 derives codes from that key
+and the player's account ID, with a fixed purpose prefix. Response data remains
+in bounded, short-lived memory caches. The [server and organizer setup
+guide](../../docs/env-vars.md#registration-forms) covers access and verification.
+
 ## Conventions
 
 ### Static-method namespace classes

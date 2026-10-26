@@ -203,7 +203,7 @@ pub fn LeagueSettings(league_url: String) -> Element {
                     params.insert("registration_form_required".into(), serde_json::json!(config.registration_form_required));
                     params.insert("registration_form_url".into(), serde_json::json!(config.registration_form_url.unwrap_or_default()));
                     params.insert("registration_form_sheet_url".into(), serde_json::json!(config.registration_form_sheet_url.unwrap_or_default()));
-                    params.insert("registration_form_username_column".into(), serde_json::json!(config.registration_form_username_column.unwrap_or_default()));
+                    params.insert("registration_form_code_column".into(), serde_json::json!(config.registration_form_code_column.unwrap_or_default()));
                     let n_max_teams = get_form_value("n_max_teams");
                     let max_roster = get_form_value("max_team_size_roster");
                     let max_field = get_form_value("max_team_size_field");

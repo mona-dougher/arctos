@@ -11,7 +11,7 @@ The multi-model workflow itself lives in
 layer in front of it.
 """
 
-from flask import Blueprint, g, request, jsonify
+from flask import Blueprint, g, request, jsonify, redirect
 from flask_login import login_required, current_user  # type: ignore[import-untyped]
 from models import (
     Tournament,
@@ -23,17 +23,67 @@ from app.domain.enums import RegistrationStatus
 from app.error_values import Err
 from app.services._common import current_user_type, Scope
 from app.services.permission_service import PermissionService
+from app.services.registration_form_service import RegistrationFormService
 from app.services.registration_service import RegistrationService
 from app.serializers.league_serializer import require_league
 from app.serializers.registration_serializer import player_reg_waiver_api
 from app.utils.decorators import require_json_body, require_tournament_organizer
-from app.utils.helpers import get_registrable_config
+from app.utils.helpers import check_tournament_access, get_registrable_config
 from app.utils.name_validation import team_pseudonym_char_error
 from app.utils.user_helpers import is_player, is_team
 from app.utils.result_helpers import json_from_result
 from app.utils.datetime_helpers import now_utc_naive
 
 bp = Blueprint("registration", __name__, url_prefix="/_api")
+
+
+def _personal_registration_form(config):
+    """Redirect the signed-in player to their form without reading Google data."""
+    result = RegistrationFormService.personal_url(config, current_user.id)
+    if isinstance(result, Err):
+        return json_from_result(result)
+    response = redirect(result.unwrap(), code=302)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@bp.route("/tournaments/<tournament_url>/registration-form", methods=["GET"])
+@login_required
+def tournament_registration_form(tournament_url: str):
+    """Open the current player's personalized registration form.
+
+    Published tournaments are accessible to signed-in players; drafts require
+    organizer access. League events use their league's registration settings.
+    The response is an uncached 302 redirect, or a JSON error with HTTP 400
+    when no form is configured, 401 when signed out, 403 when forbidden,
+    404 when the tournament is missing, or 503 when configuration is invalid.
+    """
+    if not is_player(current_user):
+        return jsonify({"success": False, "error": "Only players can open a registration form"}), 403
+    has_access, tournament = check_tournament_access(tournament_url)
+    if tournament is None:
+        return jsonify({"error": "Not found"}), 404
+    if not has_access:
+        return jsonify({"error": "Forbidden"}), 403
+    return _personal_registration_form(get_registrable_config(tournament))
+
+
+@bp.route("/leagues/<league_url>/registration-form", methods=["GET"])
+@login_required
+def league_registration_form(league_url: str):
+    """Open the current player's personalized league registration form.
+
+    Published leagues are accessible to signed-in players; drafts require
+    league organizer access. The response follows the tournament form's
+    redirect, error, and cache policy.
+    """
+    if not is_player(current_user):
+        return jsonify({"success": False, "error": "Only players can open a registration form"}), 403
+    league, error = require_league(league_url)
+    if error is not None:
+        return jsonify({"error": "Not found" if error == 404 else "Forbidden"}), error
+    return _personal_registration_form(league.registrable_config)
 
 
 @bp.route("/<tournament_url>/register-team", methods=["POST"])

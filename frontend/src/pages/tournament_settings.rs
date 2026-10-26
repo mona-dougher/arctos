@@ -707,7 +707,7 @@ pub fn TournamentSettings(url: String) -> Element {
                                             ("registration_form_required".into(), config.registration_form_required.to_string()),
                                             ("registration_form_url".into(), config.registration_form_url.unwrap_or_default()),
                                             ("registration_form_sheet_url".into(), config.registration_form_sheet_url.unwrap_or_default()),
-                                            ("registration_form_username_column".into(), config.registration_form_username_column.unwrap_or_default()),
+                                            ("registration_form_code_column".into(), config.registration_form_code_column.unwrap_or_default()),
                                         ]);
                                     }
                                     let nav = navigator.clone();

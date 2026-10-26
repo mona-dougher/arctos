@@ -39,11 +39,15 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
         waiver_sha256: SHA-256 hex digest of the waiver file bytes.
         registration_form_url: Public Google Form responder link, or ``None``
             when a response is not required.
+        registration_form_entry_id: Numeric question identifier used to prefill
+            a player's registration code.
         registration_form_sheet_id: Private response spreadsheet identifier.
         registration_form_sheet_gid: Numeric response tab identifier; zero
             is a valid identifier.
-        registration_form_username_column: Unique first-row heading for
-            the column containing Arctos usernames.
+        registration_form_code_column: Unique first-row heading for the
+            column containing Arctos registration codes.
+        registration_form_signing_key: Private key used to derive stable player
+            codes for this configuration. Never included in API responses.
         n_max_teams: Cap on the number of registered teams, or ``None``.
         max_team_size_roster: Maximum players on a team's full roster.
         max_team_size_field: Maximum players allowed on the field at once.
@@ -66,9 +70,11 @@ class RegistrableConfig(db.Model):  # type: ignore[misc]
     waiver_sha256 = db.Column(db.String(SHA256_HEX_LEN))
     # The form link is public; response-sheet details are organizer-only.
     registration_form_url = db.Column(db.String(LONG_URL_LEN), nullable=True)
+    registration_form_entry_id = db.Column(db.String(20), nullable=True)
     registration_form_sheet_id = db.Column(db.String(AUTH_STRING_LEN), nullable=True)
     registration_form_sheet_gid = db.Column(db.Integer, nullable=True)
-    registration_form_username_column = db.Column(db.String(LONG_NAME_LEN), nullable=True)
+    registration_form_code_column = db.Column(db.String(LONG_NAME_LEN), nullable=True)
+    registration_form_signing_key = db.Column(db.String(SHA256_HEX_LEN), nullable=True)
     n_max_teams = db.Column(db.Integer)
     max_team_size_roster = db.Column(db.Integer)
     max_team_size_field = db.Column(db.Integer)

@@ -6,7 +6,7 @@ pub struct RegistrationFormConfig {
     pub registration_form_required: bool,
     pub registration_form_url: Option<String>,
     pub registration_form_sheet_url: Option<String>,
-    pub registration_form_username_column: Option<String>,
+    pub registration_form_code_column: Option<String>,
     pub registration_form_service_account_email: Option<String>,
     #[serde(default)]
     pub registration_form_available: bool,

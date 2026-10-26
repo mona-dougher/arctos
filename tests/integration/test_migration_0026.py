@@ -36,11 +36,11 @@ def test_registration_form_migration_preserves_existing_scopes(tmp_path):
         with Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
         assert list(connection.exec_driver_sql("SELECT * FROM registrable_configs")) == [
-            (1, 12.5, None, None, None, None),
-            (2, 0, None, None, None, None),
+            (1, 12.5, None, None, None, None, None, None),
+            (2, 0, None, None, None, None, None, None),
         ]
         connection.exec_driver_sql(
-            "UPDATE registrable_configs SET registration_form_url='https://forms.gle/form', registration_form_sheet_id='sheet', registration_form_sheet_gid=0, registration_form_username_column='Username' WHERE id=1"
+            "UPDATE registrable_configs SET registration_form_url='https://docs.google.com/forms/d/e/form/viewform', registration_form_entry_id='123', registration_form_sheet_id='sheet', registration_form_sheet_gid=0, registration_form_code_column='Arctos registration code', registration_form_signing_key='private-test-key' WHERE id=1"
         )
         with Operations.context(MigrationContext.configure(connection)):
             migration.downgrade()

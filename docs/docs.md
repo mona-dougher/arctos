@@ -444,26 +444,37 @@ Open **Organizer tools → Settings** to edit event information and registration
 Organizers can require a Google Form response before a player registers. League
 events use the requirement in league settings.
 
-1. Add a required question to the form for the player's exact Arctos username.
-2. Link the form to a response spreadsheet. Share the spreadsheet as **Viewer**
+1. Add a required short-answer question named **Arctos registration code**. Explain
+   that Arctos fills it automatically and players should leave it unchanged.
+2. In Google Forms, choose **Pre-fill form**, enter `ARCTOS_CODE` in that question,
+   then choose **Get link** and copy the full link.
+3. Publish the form for its intended players and link it to a response spreadsheet.
+   Share the spreadsheet as **Viewer**
    with the account shown in Arctos settings; keep general access **Restricted**.
-3. In **Settings → Registration form**, enable the requirement and enter the
-   form's responder link, the response tab's spreadsheet link, and the username
+4. In **Settings → Registration form**, enable the requirement. Enter the prefilled
+   form link, the response tab's spreadsheet link, and the registration code
    column heading from the first row.
-4. Save settings. Arctos verifies access to the tab and its username heading.
+5. Save settings. Arctos verifies access to the tab and its code heading. Use a
+   player account to submit its personal form and complete registration to test
+   the setup.
 
-Players open the form from the registration page, submit it using their Arctos
-username, and return to register. Capitalization must match; a leading `@` and
-surrounding whitespace are optional. Recent responses can take a few seconds to
-appear. If verification is unavailable, players can retry with their registration
-entries preserved.
+Players choose **Open my registration form** on the registration page. Their
+registration code is filled in automatically. They submit the form and return to
+Arctos to register. Recent responses can take a few seconds to appear. If
+verification is unavailable, players can retry with their registration entries
+preserved. Organizers adding a player ask that player to complete their personal
+form first.
 
 The requirement applies to player registration, organizer registration, and
 confirmation of pending registrations. Existing confirmed registrations remain
-valid. The response spreadsheet link is visible only to organizers. Arctos reads
-the username column to check completion; the organizer controls the form and its
-response data. A match confirms that the response sheet contains the player's
-username; it does not establish who submitted it.
+valid. League events share the league's form and registration codes. Changing the
+form or its code question creates new codes; correcting spreadsheet settings
+preserves them. Disabling the requirement clears its setup.
+
+The response spreadsheet settings are visible only to organizers. Arctos reads
+the code column to associate a response with the player's account. Players should
+keep their personal links private. The organizer controls the form and its
+response data.
 
 Site administrators configure access as described in
 [environment variables](env-vars.md#registration-forms).

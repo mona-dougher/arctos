@@ -14,6 +14,7 @@ app.services
    app.services.match_service
    app.services.match_start_eligibility
    app.services.permission_service
+   app.services.registration_form_service
    app.services.registration_resolver
    app.services.registration_service
    app.services.schedule_import_export_service
