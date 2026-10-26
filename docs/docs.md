@@ -669,6 +669,13 @@ in the table, including players below the public limit. Rankings use wins, or wi
 percentage when losses are tracked. Players with no results follow played
 entries in the win-percentage ranking.
 
+Use **Weapon** to choose all weapons or one weapon when the table has multiple
+choices. Each player's entry number, weapon, jersey, and team appear with their
+name. Scores occupy separate columns. Select **Wins** or **Win %** to rank by
+that value; the arrow identifies the active ranking, with the highest values
+first. Live updates preserve the selection. If the selected weapon has no
+complete entries, the table returns to all weapons.
+
 ### Running a Side Comp
 
 Open **Enter results**, enter the player's entry number, and record the result.

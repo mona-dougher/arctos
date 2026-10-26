@@ -70,10 +70,10 @@ fn StandingSortHeader(label: &'static str, active: bool, onsort: EventHandler<()
             aria_sort: if active { "descending" } else { "none" },
             button {
                 r#type: "button",
-                class: if active { "btn btn-link p-0 align-baseline text-decoration-none fw-bold" } else { "btn btn-link p-0 align-baseline text-decoration-none fw-normal" },
-                style: "color: inherit;",
+                class: "results-sort-button",
                 onclick: move |_| onsort.call(()),
-                "{label}"
+                span { class: "sidecomp-sort-label", "{label}" }
+                span { aria_hidden: "true", if active { "↓" } else { "◇" } }
             }
         }
     }
@@ -91,7 +91,7 @@ fn StandingAvatar(photo: Option<String>, is_team: bool) -> Element {
             img {
                 src: "{src}",
                 alt: "",
-                class: "rounded-circle me-2",
+                class: "rounded-circle me-2 sidecomp-standing-avatar",
                 style: "width: 28px; height: 28px; object-fit: cover;",
             }
         }
@@ -103,7 +103,8 @@ fn StandingAvatar(photo: Option<String>, is_team: bool) -> Element {
         };
         rsx! {
             span {
-                class: "d-inline-flex align-items-center justify-content-center bg-secondary rounded-circle text-white me-2",
+                aria_hidden: "true",
+                class: "d-inline-flex align-items-center justify-content-center bg-secondary rounded-circle text-white me-2 sidecomp-standing-avatar",
                 style: "width: 28px; height: 28px;",
                 i { class: "{icon}", style: "font-size: 0.75rem;" }
             }
@@ -122,6 +123,12 @@ fn StandingsTableView(
         weapon: None,
         sort: StandingSort::default_for(track_losses),
     });
+    use_effect(use_reactive(&table.available_weapons, move |available_weapons| {
+        let selected_weapon = selection.peek().weapon.clone();
+        if selected_weapon.is_some_and(|weapon| !available_weapons.contains(&weapon)) {
+            selection.write().weapon = None;
+        }
+    }));
     let current_selection = selection().for_loss_tracking(track_losses);
     let sort = current_selection.sort;
     let mut selected_standings = use_resource(use_reactive(
@@ -192,39 +199,28 @@ fn StandingsTableView(
             .map_or(id.as_str(), |option| option.label)
             .to_string()
     });
+    let ranking_name = if sort == StandingSort::WinRatio { "win percentage" } else { "wins" };
+    let summary = format!("{} · Ranked by {ranking_name}", weapon_name.as_deref().unwrap_or("All weapons"));
+    let weapon_select_id = format!("sidecomp-{comp_id}-{}-weapon", table.id);
     rsx! {
         section { class: "mb-4", aria_label: "{table.title}",
             div { class: "d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2",
                 h3 { class: "h4 mb-0", "{table.title}" }
-                div {
-                    class: "d-flex flex-wrap gap-1",
-                    role: "group",
-                    aria_label: "{table.title} weapon filter",
-                    button {
-                        r#type: "button",
-                        class: if current_selection.weapon.is_none() { "btn btn-sm btn-primary" } else { "btn btn-sm btn-outline-secondary" },
-                        aria_pressed: current_selection.weapon.is_none(),
-                        onclick: move |_| { selection.write().weapon = None; },
-                        "All"
-                    }
-                    for w in table.available_weapons.iter() {
-                        {
-                            let wid = w.clone();
-                            let wid_btn = w.clone();
-                            let active = current_selection.weapon.as_deref() == Some(wid.as_str());
-                            let label = pompfen_by_id(&wid)
-                                .map_or(wid.as_str(), |option| option.label)
-                                .to_string();
-                            rsx! {
-                                button {
-                                    r#type: "button",
-                                    class: if active { "btn btn-sm btn-primary d-inline-flex align-items-center gap-1" } else { "btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" },
-                                    aria_pressed: active,
-                                    onclick: move |_| { selection.write().weapon = Some(wid_btn.clone()); },
-                                    span { aria_hidden: "true",
-                                        PompfenIcon { weapon: wid.clone(), size: "1.1em".to_string() }
-                                    }
-                                    "{label}"
+                if table.available_weapons.len() > 1 {
+                    div { class: "sidecomp-weapon-filter",
+                        label { r#for: weapon_select_id.clone(), class: "form-label mb-0", "Weapon" }
+                        select {
+                            id: weapon_select_id,
+                            class: "form-select",
+                            value: current_selection.weapon.clone().unwrap_or_default(),
+                            onchange: move |event| {
+                                let weapon = event.value();
+                                selection.write().weapon = if weapon.is_empty() { None } else { Some(weapon) };
+                            },
+                            option { value: "", "All weapons" }
+                            for weapon in table.available_weapons.iter() {
+                                option { value: weapon.clone(),
+                                    {pompfen_by_id(weapon).map_or(weapon.as_str(), |option| option.label)}
                                 }
                             }
                         }
@@ -232,16 +228,7 @@ fn StandingsTableView(
                 }
             }
             p { class: "small text-muted mb-2",
-                if let Some(weapon) = weapon_name {
-                    "{weapon} · "
-                } else {
-                    "All weapons · "
-                }
-                if sort == StandingSort::WinRatio {
-                    "Ranked by win percentage"
-                } else {
-                    "Ranked by wins"
-                }
+                "{summary}"
             }
             if displayed_table.is_none() {
                 p { role: "status", class: "text-muted", "Loading standings…" }
@@ -266,12 +253,14 @@ fn StandingsTableView(
                 "aria-label": "{table.title} standings",
                 tabindex: "0",
                 table { class: "table table-striped align-middle sidecomp-standings-table",
+                    caption { class: "visually-hidden",
+                        "{table.title} standings. {summary}. Rankings are highest first."
+                        if table.track_losses { " Select Wins or Win % to change the ranking." }
+                    }
                     thead {
                         tr {
                             th { scope: "col", class: "table-number", "Rank" }
-                            th { scope: "col", class: "table-number", "#" }
-                            th { scope: "col", class: "table-nowrap", "Player" }
-                            th { scope: "col", class: "table-nowrap", "Role" }
+                            th { scope: "col", "Player" }
                             StandingSortHeader {
                                 label: "Wins",
                                 active: sort == StandingSort::Wins,
@@ -291,15 +280,25 @@ fn StandingsTableView(
                         for row in rows.iter() {
                             tr { key: "{row.registration_id}",
                                 td { class: "table-number", "{row.rank}" }
-                                td { class: "table-number", "{row.entry_number}" }
                                 td { class: "table-copy",
-                                    div { class: "d-flex align-items-center",
+                                    div { class: "sidecomp-standing-player",
                                         StandingAvatar {
                                             photo: row.profile_photo.clone(),
                                             is_team: false,
                                         }
-                                        div {
+                                        div { class: "sidecomp-standing-identity",
                                             div { class: "fw-semibold", "{row.display_name}" }
+                                            div { class: "small text-muted sidecomp-standing-entry",
+                                                span { "Entry #{row.entry_number}" }
+                                                if let Some(weapon) = row.weapon.as_ref() {
+                                                    span { class: "sidecomp-standing-weapon",
+                                                        span { aria_hidden: "true",
+                                                            PompfenIcon { weapon: weapon.clone(), size: "1.1em".to_string() }
+                                                        }
+                                                        {pompfen_by_id(weapon).map_or(weapon.as_str(), |option| option.label)}
+                                                    }
+                                                }
+                                            }
                                             div { class: "small text-muted d-flex align-items-center",
                                                 StandingAvatar {
                                                     photo: row.team_profile_photo.clone(),
@@ -318,14 +317,6 @@ fn StandingsTableView(
                                                     }
                                                 }
                                             }
-                                        }
-                                    }
-                                }
-                                td { class: "table-nowrap",
-                                    if let Some(w) = row.weapon.as_ref() {
-                                        PompfenIcon {
-                                            weapon: w.clone(),
-                                            size: "1.5em".to_string(),
                                         }
                                     }
                                 }
@@ -371,6 +362,7 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
     let url_back = url.clone();
     let displayed_standings = last_standings().filter(|data| data.id == comp_id);
     rsx! {
+        style { {include_str!("sidecomp_results.css")} }
         div { class: "row",
             div { class: "col-12",
                 Link {

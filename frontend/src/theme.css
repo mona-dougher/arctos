@@ -789,7 +789,7 @@
 .arctos-app .table-jersey { display: inline-grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: .75rem; width: 8.5rem; max-width: 100%; }
 .arctos-app .table-jersey > .table-copy { grid-column: 1; min-width: 0; }
 .arctos-app .table-jersey > .table-nowrap { grid-column: 2; justify-self: end; font-variant-numeric: tabular-nums; }
-.arctos-app .sidecomp-standings-table td.table-copy, .arctos-app .sidecomp-management-table td:nth-child(2) { min-width: 12rem; }
+.arctos-app .sidecomp-management-table td:nth-child(2) { min-width: 12rem; }
 .arctos-app .footage-table td:first-child { min-width: 10rem; }
 .arctos-app .table-responsive { border: 1px solid var(--ui-border); border-radius: 10px; background: var(--ui-surface); overscroll-behavior-x: contain; }
 .arctos-app .table-responsive > .table { margin-bottom: 0; }
