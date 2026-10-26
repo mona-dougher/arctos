@@ -460,9 +460,9 @@ def tournament_detail(tournament_url):
         else:
             user = to_teams_by_id.get(e.user_id)
         user_name = user.name if user else e.user_id
-        is_current = (
-            current_user.is_authenticated and ((current_user.id == e.user_id and current_user_type() == e.user_type)
-                or (e.user_type == "team" and PermissionService.can_manage_team(e.user_id, current_user)))
+        is_current = current_user.is_authenticated and (
+            (current_user.id == e.user_id and current_user_type() == e.user_type)
+            or (e.user_type == "team" and PermissionService.can_manage_team(e.user_id, current_user))
         )
         to_entries.append(
             {
@@ -526,6 +526,7 @@ def tournament_manage_api(tournament_url):
 @login_required
 def tournament_invitations_api(tournament_url):
     from app.utils.team_access import requested_team_id
+
     team_id = requested_team_id()
 
     tournament = Tournament.query.filter_by(url=tournament_url).first_or_404()

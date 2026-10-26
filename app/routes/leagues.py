@@ -82,7 +82,9 @@ def _visible_league_rounds():
     """Query published rounds and drafts belonging to leagues the caller organizes."""
     visible = Tournament.published == True
     if current_user.is_authenticated:
-        organized_ids = PermissionService.organizer_query(current_user).with_entities(TO.league_id).filter(TO.league_id.isnot(None))
+        organized_ids = (
+            PermissionService.organizer_query(current_user).with_entities(TO.league_id).filter(TO.league_id.isnot(None))
+        )
         visible = or_(visible, Tournament.league_id.in_(organized_ids))
     return Tournament.query.filter(visible)
 
@@ -125,7 +127,9 @@ def leagues_list():
 
     visible = League.published == True
     if current_user.is_authenticated:
-        organized_ids = PermissionService.organizer_query(current_user).with_entities(TO.league_id).filter(TO.league_id.isnot(None))
+        organized_ids = (
+            PermissionService.organizer_query(current_user).with_entities(TO.league_id).filter(TO.league_id.isnot(None))
+        )
         visible = or_(visible, League.url.in_(organized_ids))
     leagues = League.query.filter(visible).all()
 
@@ -320,9 +324,9 @@ def league_detail(league_url):
     for e in to_rows:
         user = (to_players_by_id if e.user_type == "player" else to_teams_by_id).get(e.user_id)
         user_name = user.name if user else e.user_id
-        is_current = (
-            current_user.is_authenticated and ((current_user.id == e.user_id and current_user_type() == e.user_type)
-                or (e.user_type == "team" and PermissionService.can_manage_team(e.user_id, current_user)))
+        is_current = current_user.is_authenticated and (
+            (current_user.id == e.user_id and current_user_type() == e.user_type)
+            or (e.user_type == "team" and PermissionService.can_manage_team(e.user_id, current_user))
         )
         to_entries.append(
             {
@@ -552,8 +556,9 @@ def league_remove_to(league_url):
     if to_to_remove.league_id != league_url:
         return jsonify({"success": False, "error": "Invalid TO entry"}), 400
 
-    if ((to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user_type())
-            or (to_to_remove.user_type == "team" and PermissionService.can_manage_team(to_to_remove.user_id, current_user))):
+    if (to_to_remove.user_id == current_user.id and to_to_remove.user_type == current_user_type()) or (
+        to_to_remove.user_type == "team" and PermissionService.can_manage_team(to_to_remove.user_id, current_user)
+    ):
         return (
             jsonify({"success": False, "error": "You cannot remove yourself as a TO"}),
             400,
@@ -661,6 +666,7 @@ def league_manage_api(league_url):
 def league_invitations_api(league_url):
     """League roster/invitations for a team. Same structure as tournament invitations."""
     from app.utils.team_access import requested_team_id
+
     team_id = requested_team_id()
 
     league, err = require_league(league_url)

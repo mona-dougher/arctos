@@ -38,8 +38,10 @@ def user_json() -> dict | None:
     from app.services.permission_service import PermissionService
 
     return {
-        "managed_teams": [{"id": team.id, "name": team.name, "profile_photo": team.profile_photo}
-                          for team in PermissionService.managed_teams(current_user)],
+        "managed_teams": [
+            {"id": team.id, "name": team.name, "profile_photo": team.profile_photo}
+            for team in PermissionService.managed_teams(current_user)
+        ],
         "id": current_user.id,
         "name": current_user.name,
         "type": t,

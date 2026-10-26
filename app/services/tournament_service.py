@@ -55,7 +55,9 @@ class TournamentService:
 
         to_tournament_urls, league_urls = PermissionService.organized_scopes(user)
         if league_urls:
-            to_tournament_urls.update(row.url for row in Tournament.query.filter(Tournament.league_id.in_(league_urls)).all())
+            to_tournament_urls.update(
+                row.url for row in Tournament.query.filter(Tournament.league_id.in_(league_urls)).all()
+            )
 
         all_tournament_urls = {t.url for t in published_tournaments}
         all_tournament_urls.update(to_tournament_urls or [])

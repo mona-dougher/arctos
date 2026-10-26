@@ -366,6 +366,7 @@ def check_tournament_access(tournament_url: str):
         return False, tournament
 
     from app.services.permission_service import PermissionService
+
     if not PermissionService.is_tournament_organizer_of(tournament, current_user):
         return False, tournament
 

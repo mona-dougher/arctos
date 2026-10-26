@@ -11,9 +11,7 @@ from app.utils.user_helpers import is_team
 
 def requested_team_id() -> str:
     payload = request.get_json(silent=True) if request.is_json else request.form
-    selected = request.args.get("team_id") or (
-        payload.get("team_id") if isinstance(payload, Mapping) else None
-    )
+    selected = request.args.get("team_id") or (payload.get("team_id") if isinstance(payload, Mapping) else None)
     if selected is None and is_team(current_user):
         selected = current_user.id
     if not isinstance(selected, str) or not PermissionService.can_manage_team(selected, current_user):
