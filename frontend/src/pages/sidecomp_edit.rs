@@ -291,7 +291,7 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                             oninput: move |evt| top_n_text.set(evt.value()),
                         }
                         div { id: "sidecomp-top-n-help", class: "form-text",
-                            "Enter 3 to publish the top three in each table. Dueling also shows one leader per weapon class. Players can see their own result, and organizers can see complete standings. Leave blank to publish all results, or enter 0 to hide results."
+                            "Applies to All weapons; a weapon filter shows its top player. Leave blank to publish everyone, or enter 0 to hide results."
                         }
                     }
                         }

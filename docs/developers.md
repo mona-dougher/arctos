@@ -597,8 +597,8 @@ Standings. `CHAIN_BREAKING` has two tables, `chains` and `breaks`; every
 other type has one, `all`. Rows are ranked by wins, or by win percentage
 when the table tracks losses. This endpoint returns the public summary: a
 positive public result limit selects that many rows per table. Its payload
-contains the published tables. Personal results and weapon class leaders are
-provided by the application endpoint. `404` when the organizers have hidden
+contains the published tables. Personal results are provided by the application
+endpoint. `404` when the organizers have hidden
 the results.
 
 ```json

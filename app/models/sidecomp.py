@@ -49,9 +49,9 @@ class SideComp(db.Model):
         only_show_top_n_results: When ``None``, public standings show all
             ranked players. When ``0``, all results are hidden. A positive
             integer ``N`` publishes the top ``N`` in each table after ranking.
-            Dueling also publishes one leader per weapon class. Organizers
-            see complete standings; signed-in players can see their own
-            standing beyond the public cutoff.
+            Selecting a weapon shows its leader in the application. Organizers
+            see complete matching standings; signed-in players can see their
+            own standing beyond the public cutoff.
         created_at: Timestamp when the side competition was created.
     """
 

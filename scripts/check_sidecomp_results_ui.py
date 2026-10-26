@@ -30,8 +30,37 @@ WEAPONS = {
     "UNARMED": "Unarmed",
 }
 LONG_NAME = "Alexandria Montgomery-Worthington"
-UNBROKEN_NAME = "LongPlayerWithAnUnbrokenName"
-FLORENTINE_BY_WINS = ["Florentine A", "Florentine B", "Florentine C", "Florentine D"]
+UNBROKEN_NAME = "AlexandriaMontgomeryWorthington"
+CHAIN_NAMES = ["Morgan Reed", "Alex Rivera", "Jamie Park", "Taylor Chen", "Casey Singh"]
+STAFF_NAMES = ["Jordan Ellis", "Avery Brooks", "Riley Patel"]
+OWN_NAME = "Cameron Blake"
+OWN_ID = "cameron-blake"
+FLORENTINE_BY_WINS = ["Sam Bennett", "Quinn Harper", "Drew Morgan", OWN_NAME]
+WEAPON_NAMES = dict(
+    zip(
+        WEAPONS,
+        [
+            LONG_NAME,
+            UNBROKEN_NAME,
+            "Robin Santos",
+            "Emerson Cole",
+            "Parker Lin",
+            "Harper Gray",
+            "Sage Morris",
+            "Finley Ross",
+        ],
+        strict=True,
+    )
+)
+BEAR_CLASS_NAMES = [
+    "Noah Patel",
+    "Riley Chen",
+    "Taylor Nguyen",
+    "Casey Rivera",
+    "Quinn Harper",
+    "Jordan Blake",
+    "Avery Singh",
+]
 
 
 def standing(entry_number: int, name: str, weapon: str, wins: int, losses: int | None) -> dict:
@@ -65,6 +94,8 @@ class StandingsFixture:
         self.bear = False
         self.track_losses = True
         self.large_numbers = False
+        self.no_scores = False
+        self.unplayed_weapons: set[str] = set()
         self.removed_weapon: str | None = None
         self.denied_status: int | None = None
         self.fail_metadata = False
@@ -75,79 +106,75 @@ class StandingsFixture:
         self.held_policies: dict[
             tuple[bool, int | None, str, bool], tuple[asyncio.Event, asyncio.Event, asyncio.Event]
         ] = {}
-        self.chains = [
-            standing(20 + index, f"Chain {letter}", "CHAIN", 9 - index, None) for index, letter in enumerate("ABCDE")
-        ]
-        self.staff = [standing(3 + index, f"Staff {index + 1}", "STAFF", 9 - index, 0) for index in range(3)]
+        self.chains = [standing(20 + index, name, "CHAIN", 9 - index, None) for index, name in enumerate(CHAIN_NAMES)]
+        self.staff = [standing(3 + index, name, "STAFF", 9 - index, 0) for index, name in enumerate(STAFF_NAMES)]
         self.florentine = [
-            standing(6, "Florentine A", "FLORENTINE", 6, 6),
-            standing(7, "Florentine B", "FLORENTINE", 5, 0),
-            standing(8, "Florentine C", "FLORENTINE", 4, 0),
-            standing(9, "Florentine D", "FLORENTINE", 3, 0),
+            standing(6, FLORENTINE_BY_WINS[0], "FLORENTINE", 6, 6),
+            standing(7, FLORENTINE_BY_WINS[1], "FLORENTINE", 5, 0),
+            standing(8, FLORENTINE_BY_WINS[2], "FLORENTINE", 4, 0),
+            standing(9, OWN_NAME, "FLORENTINE", 3, 0),
         ]
-
         self.all_weapons = [
-            standing(10 + index, LONG_NAME if index == 0 else f"{label} Player", weapon, 12 - index, 0)
-            for index, (weapon, label) in enumerate(WEAPONS.items())
+            standing(10 + index, WEAPON_NAMES[weapon], weapon, 12 - index, 0) for index, weapon in enumerate(WEAPONS)
         ]
-        self.all_weapons[-1].update(wins=0, losses=0, win_percentage=None)
+        self.all_weapons[-1].update(wins=0, losses=3, win_percentage=0)
         self.all_weapons[0].update(
             entry_number=12345, wins=123, jersey_name="MontgomeryWorthington", team_shortname="NORTHWESTJUGGER"
         )
-        self.all_weapons[1]["display_name"] = UNBROKEN_NAME
-        # Three leaders share a class; other class winners remain below the overall cutoff.
-        self.bear_rows = [
-            standing(30, "Chain Champion", "CHAIN", 30, 0),
-            standing(31, "Chain Runner Up", "CHAIN", 29, 0),
-            standing(32, "Chain Third", "CHAIN", 28, 0),
-            *[
-                standing(33 + index, f"{label} Champion", weapon, 20 - index, 0)
-                for index, (weapon, label) in enumerate(list(WEAPONS.items())[1:])
-            ],
-            standing(40, "Florentine D", "FLORENTINE", 3, 2),
-        ]
+        self.bear_rows = (
+            [standing(30 + index, name, "CHAIN", 30 - index, 0) for index, name in enumerate(CHAIN_NAMES[:3])]
+            + [
+                standing(33 + index, name, weapon, 20 - index, 0)
+                for index, (weapon, name) in enumerate(zip(list(WEAPONS)[1:], BEAR_CLASS_NAMES, strict=True))
+            ]
+            + [standing(40, OWN_NAME, "FLORENTINE", 3, 2)]
+        )
 
     def table(self, table_id: str, weapon: str | None, sort: str | None) -> dict:
         track_losses = table_id != "chains" and self.track_losses
         effective_sort = (sort or "win_percentage") if track_losses else "wins"
         if self.bear:
-            rows = self.bear_rows
+            source = self.bear_rows
         elif self.generic:
-            rows = self.all_weapons
+            source = self.all_weapons
         elif table_id == "chains":
-            rows = self.chains
+            source = self.chains
         else:
-            rows = self.staff + self.florentine
+            source = self.staff + self.florentine
+        rows = deepcopy(source)
         if self.removed_weapon is not None:
             rows = [row for row in rows if row["weapon"] != self.removed_weapon]
-        available_weapons = [value for value in WEAPONS if any(row["weapon"] == value for row in rows)]
-        rows = sorted(
-            rows,
-            key=lambda row: (row[effective_sort] if row[effective_sort] is not None else -1, row["wins"]),
-            reverse=True,
+        for row in rows:
+            if self.no_scores or row["weapon"] in self.unplayed_weapons:
+                row.update(wins=0, losses=0 if track_losses else None, win_percentage=None)
+        if self.empty:
+            rows = []
+        available_weapons = [
+            value
+            for value in WEAPONS
+            if any(row["weapon"] == value and row["wins"] + (row["losses"] or 0) > 0 for row in rows)
+        ]
+        rows.sort(
+            key=lambda row: (row[effective_sort] if row[effective_sort] is not None else -1, row["wins"]), reverse=True
         )
         if self.empty or self.hidden:
             rows = []
-        rows = deepcopy(rows)
         for rank, row in enumerate(rows, start=1):
-            row["rank"] = 2_147_483_600 + rank if self.large_numbers else rank
+            row["rank"] = rank
             if not track_losses:
                 row.update(losses=None, win_percentage=None)
-            if self.large_numbers:
-                row.update(wins=2_147_483_647, losses=2_147_483_647, win_percentage=50)
-        personal_row = next((row for row in rows if row["player_id"] == self.viewer_player_id), None)
-        class_winners = []
-        if self.bear:
-            for choice in available_weapons:
-                if weapon is not None and choice != weapon:
-                    continue
-                winner = next((row for row in rows if row["weapon"] == choice), None)
-                if winner is not None:
-                    class_winners.append(deepcopy(winner))
-        if not self.organizer and self.public_limit is not None and self.public_limit > 0:
-            rows = rows[: self.public_limit]
+        personal_row = next((deepcopy(row) for row in rows if row["player_id"] == self.viewer_player_id), None)
         if weapon is not None:
-            rows = [row for row in rows if row["weapon"] == weapon]
+            rows = [row for row in rows if row["weapon"] == weapon] if weapon in available_weapons else []
+            for rank, row in enumerate(rows, start=1):
+                row["rank"] = rank
+        if not self.organizer and self.public_limit is not None and self.public_limit > 0:
+            rows = rows[: 1 if weapon is not None else self.public_limit]
+        if self.large_numbers:
+            for row in rows:
+                row.update(
+                    rank=2_147_483_600 + row["rank"], wins=2_147_483_647, losses=2_147_483_647, win_percentage=50
+                )
         return {
             "id": table_id,
             "title": {"all": "Standings", "chains": "Chains", "breaks": "Breaks"}[table_id],
@@ -156,7 +183,6 @@ class StandingsFixture:
             "weapon": weapon,
             "sort": effective_sort,
             "personal_row": personal_row,
-            "class_winners": class_winners,
             "rows": rows,
         }
 
@@ -179,7 +205,7 @@ class StandingsFixture:
         }
         held_policy = (
             self.held_policies.get((self.organizer, self.public_limit, competition_type, self.track_losses))
-            if weapon is not None
+            if "table" in query
             else None
         )
         if held_policy is not None:
@@ -206,7 +232,7 @@ class StandingsFixture:
             await route.fulfill(
                 json={
                     "id": self.viewer_player_id,
-                    "name": "Demo Organizer" if self.organizer else "Florentine D",
+                    "name": "Demo Organizer" if self.organizer else OWN_NAME,
                     "type": "player",
                 }
             )
@@ -263,7 +289,6 @@ async def check_table_layout(page: Page, allow_horizontal_scroll: bool = False) 
         const cells = [...table.querySelectorAll('th, td')];
         return {
             title: table.caption?.textContent,
-            classLeaders: wrapper.getAttribute('aria-label') === 'Weapon class leaders standings',
             width: wrapper.clientWidth,
             contentWidth: wrapper.scrollWidth,
             overflowingCells: cells.filter(cell => cell.scrollWidth > cell.clientWidth + 1)
@@ -284,17 +309,22 @@ async def check_table_layout(page: Page, allow_horizontal_scroll: bool = False) 
     })""",
         allow_horizontal_scroll,
     )
-    assert diagnostics, "No standings table rendered"
+    assert len(diagnostics) == 1, f"Expected one standings table: {diagnostics}"
     for table in diagnostics:
         assert table["title"], table
-        if not table["classLeaders"]:
-            assert "Rankings are highest first" in table["title"], table
+        assert "Rankings are highest first" in table["title"], table
         if not allow_horizontal_scroll:
             assert table["contentWidth"] <= table["width"] + 1, f"Scores require horizontal scrolling: {table}"
         assert not table["overflowingCells"], f"Standings text overflows a cell: {table}"
         assert not table["missingScopes"] and not table["unalignedNumbers"], table
         assert not table["smallControls"], f"Standings controls are clipped or smaller than 44px: {table}"
         assert len(set(table["columnCounts"])) == 1, f"Headers and rows have different columns: {table}"
+    small_groups = await page.locator(".sidecomp-group-option").evaluate_all("""labels => labels.flatMap(label => {
+        const rect = label.getBoundingClientRect();
+        return rect.width < 43.9 || rect.height < 43.9 || rect.left < -1 || rect.right > innerWidth + 1
+            ? [{text: label.textContent, width: rect.width, height: rect.height}] : [];
+    })""")
+    assert not small_groups, f"Results group controls are clipped or smaller than 44px: {small_groups}"
 
 
 async def check_keyboard_focus(control) -> None:
@@ -331,57 +361,82 @@ async def capture_state(check: SmokeCheck, page: Page, name: str) -> None:
     await page.set_viewport_size({"width": 390, "height": 900})
 
 
+async def show_breaks(page: Page):
+    await page.get_by_role("radio", name="Breaks", exact=True).check()
+    section = page.get_by_role("region", name="Breaks", exact=True)
+    await expect(section).to_be_visible()
+    await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
+    return section
+
+
 async def verify(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> None:
     await page.goto(f"{check.base_url}/demo-open/sidecomps/{fixture.comp_id}/results")
+    groups = page.get_by_role("group", name="Results", exact=True)
+    await expect(groups.get_by_role("radio", name="Chains", exact=True)).to_be_checked()
     chains = page.get_by_role("region", name="Chains", exact=True)
-    breaks = page.get_by_role("region", name="Breaks", exact=True)
-    await assert_players(chains, ["Chain A", "Chain B", "Chain C"])
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+    await assert_players(chains, CHAIN_NAMES[:3])
+    await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
     await expect(page.get_by_role("heading", name="Your result", exact=True)).to_have_count(0)
-    await expect(page.locator(".sidecomp-standing-self")).to_have_count(0)
-    await expect(page.get_by_role("checkbox", name="Show only the top", exact=False)).to_have_count(0)
-    await expect(chains.get_by_role("combobox")).to_have_count(0)
+    chain_weapon = chains.get_by_role("combobox", name="Weapon", exact=True)
+    await expect(chain_weapon.locator("option")).to_have_text(["All weapons", "Chain"])
+    await chain_weapon.select_option("CHAIN")
+    await assert_players(chains, CHAIN_NAMES[:1])
     await expect(chains.locator("thead th")).to_have_text(["Rank", "Player", "Wins↓"])
-    await capture_state(check, page, "sidecomp-public-chain")
+    # Native radio keyboard navigation changes the active group without adding tables.
+    await page.keyboard.press("Tab")
+    await check_keyboard_focus(groups.get_by_role("radio", name="Chains", exact=True))
+    await page.keyboard.press("ArrowRight")
+    await expect(groups.get_by_role("radio", name="Breaks", exact=True)).to_be_checked()
+    breaks = await show_breaks(page)
+    await assert_players(breaks, STAFF_NAMES)
+    await capture_state(check, page, "sidecomp-chain-breaks")
     weapon = breaks.get_by_role("combobox", name="Weapon", exact=True)
     await weapon.select_option("FLORENTINE")
-    await expect(breaks.get_by_text("No published leaders match this weapon.", exact=True)).to_be_visible()
-    await expect(breaks.locator("tbody tr")).to_have_count(0)
+    await assert_players(breaks, [FLORENTINE_BY_WINS[1]])
     await breaks.get_by_role("button", name="Wins", exact=True).click()
-    await expect(breaks.locator("tbody tr")).to_have_count(0)
+    await assert_players(breaks, FLORENTINE_BY_WINS[:1])
     await weapon.select_option("STAFF")
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+    await assert_players(breaks, STAFF_NAMES[:1])
 
-    # A delayed empty selection must not replace the newer published leaders.
+    # Delayed selections cannot replace newer choices or a different results group.
     fixture.delay_next("FLORENTINE")
     await weapon.select_option("FLORENTINE")
     await asyncio.wait_for(fixture.delay_started.wait(), TIMEOUT_MS / 1000)
     await expect(breaks.get_by_text("Loading standings…")).to_be_visible()
-    await expect(breaks.locator("tbody tr")).to_have_count(0)
     await weapon.select_option("STAFF")
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+    await assert_players(breaks, STAFF_NAMES[:1])
     fixture.release_delay.set()
+    fixture.delay_next("FLORENTINE")
+    await weapon.select_option("FLORENTINE")
+    await asyncio.wait_for(fixture.delay_started.wait(), TIMEOUT_MS / 1000)
+    await groups.get_by_role("radio", name="Chains", exact=True).check()
+    await expect(chains).to_be_visible()
+    await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
+    fixture.release_delay.set()
+    await page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    await expect(page.get_by_role("region", name="Breaks", exact=True)).to_have_count(0)
+    breaks = await show_breaks(page)
+    weapon = breaks.get_by_role("combobox", name="Weapon", exact=True)
+    await weapon.select_option("STAFF")
+    await assert_players(breaks, STAFF_NAMES[:1])
 
-    # A request slower than the polling interval must still finish.
     fixture.delay_next("FLORENTINE")
     await weapon.select_option("FLORENTINE")
     await asyncio.wait_for(fixture.delay_started.wait(), TIMEOUT_MS / 1000)
     await asyncio.sleep(1.2)
     await expect(breaks.get_by_text("Loading standings…")).to_be_visible()
     fixture.release_delay.set()
-    await expect(breaks.get_by_text("No published leaders match this weapon.", exact=True)).to_be_visible()
-
+    await expect(breaks.locator("tbody tr")).to_have_count(1)
     fixture.fail_weapon = "STAFF"
     await weapon.select_option("STAFF")
     await expect(breaks.get_by_role("alert")).to_contain_text("Could not load standings")
-    await expect(weapon).to_have_value("STAFF")
     await breaks.get_by_role("button", name="Retry standings", exact=True).focus()
     fixture.fail_weapon = None
     await page.keyboard.press("Enter")
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+    await assert_players(breaks, STAFF_NAMES[:1])
     fixture.fail_metadata = True
     await expect(page.get_by_role("alert")).to_contain_text("Could not refresh results")
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+    await assert_players(breaks, STAFF_NAMES[:1])
     await expect(weapon).to_have_value("STAFF")
     await page.get_by_role("button", name="Retry results", exact=True).focus()
     fixture.fail_metadata = False
@@ -390,125 +445,109 @@ async def verify(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> No
     check.network_errors = [
         error for error in check.network_errors if "HTTP 503" not in error or "/standings" not in error
     ]
-
-    # An unset cap publishes all rows; filtering retains their overall ranks.
     fixture.public_limit = None
     await weapon.select_option("FLORENTINE")
-    await assert_players(breaks, FLORENTINE_BY_WINS, ranks=[4, 5, 6, 7])
+    await breaks.get_by_role("button", name="Wins", exact=True).click()
+    await assert_players(breaks, FLORENTINE_BY_WINS)
     fixture.hidden = True
     await expect(page.get_by_text("Results are not being shown for this side competition.", exact=True)).to_be_visible()
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(0)
 
 
 async def verify_personal_rank(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> None:
-    """Personal scores remain separate from public leaders while filters change."""
     fixture.release_policies()
     fixture.hidden = False
     fixture.public_limit = 3
-    fixture.viewer_player_id = "florentine-d"
+    fixture.viewer_player_id = OWN_ID
     await page.goto(f"{check.base_url}/demo-open/sidecomps/{fixture.comp_id}/results")
-    breaks = page.get_by_role("region", name="Breaks", exact=True)
+    personal = page.get_by_role("region", name="Your result", exact=True)
+    await expect(personal.get_by_text("Breaks · Florentine", exact=True)).to_be_visible()
+    await expect(personal.get_by_text("Rank: 6", exact=True)).to_be_visible()
+    await expect(personal.get_by_text("Wins: 3", exact=True)).to_be_visible()
+    await expect(personal.get_by_text("Losses: 0", exact=True)).to_be_visible()
+    # The personal result remains available even when the other scoring group is selected.
+    await expect(page.get_by_role("radio", name="Chains", exact=True)).to_be_checked()
+    breaks = await show_breaks(page)
     weapon = breaks.get_by_role("combobox", name="Weapon", exact=True)
-    await expect(page.get_by_role("heading", name="Your result", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Rank: 6", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Wins: 3", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Losses: 0", exact=True)).to_be_visible()
-    await expect(page.get_by_text(re.compile(r"^Win percentage: 100(?:\.0)?%$"))).to_be_visible()
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
-    await expect(breaks.locator("tbody").get_by_text("Florentine D", exact=False)).to_have_count(0)
-    await capture_state(check, page, "sidecomp-personal-chain")
+    await assert_players(breaks, STAFF_NAMES)
     await weapon.select_option("FLORENTINE")
-    await expect(breaks.get_by_text("No published leaders match this weapon.", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Rank: 6", exact=True)).to_be_visible()
+    await assert_players(breaks, [FLORENTINE_BY_WINS[1]])
     await breaks.get_by_role("button", name="Wins", exact=True).click()
-    await expect(page.get_by_text("Rank: 6", exact=True)).to_be_visible()
+    await assert_players(breaks, FLORENTINE_BY_WINS[:1])
+    await expect(personal.get_by_text("Rank: 6", exact=True)).to_be_visible()
     await weapon.select_option("STAFF")
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
-    await expect(page.get_by_text("Rank: 6", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Wins: 3", exact=True)).to_be_visible()
+    await assert_players(breaks, STAFF_NAMES[:1])
+    await expect(personal.get_by_text("Rank: 6", exact=True)).to_be_visible()
     fixture.public_limit = None
-    await weapon.select_option("")
+    await weapon.select_option("FLORENTINE")
+    await assert_players(breaks, FLORENTINE_BY_WINS, own_name=OWN_NAME)
     await expect(breaks.locator("tbody").get_by_text("You", exact=True)).to_have_count(1)
-    own_row = breaks.locator("tbody tr").filter(has=page.get_by_text("You", exact=True))
-    await expect(own_row.locator("td:first-child")).to_have_text("7")
-    fixture.public_limit = 3
-    await expect(breaks.locator("tbody tr")).to_have_count(3)
     fixture.hidden = True
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(0)
-    await expect(page.get_by_role("heading", name="Your result", exact=True)).to_have_count(0)
+    await expect(personal).to_have_count(0)
     fixture.hidden = False
 
 
 async def verify_organizer(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> None:
-    """Only organizers receive the full list, including after live access changes."""
     fixture.viewer_player_id = DEMO_USER
     fixture.organizer = True
     fixture.public_limit = 3
     await page.goto(f"{check.base_url}/demo-open/sidecomps/{fixture.comp_id}/results")
-    chains = page.get_by_role("region", name="Chains", exact=True)
-    breaks = page.get_by_role("region", name="Breaks", exact=True)
+    await assert_players(page.get_by_role("region", name="Chains", exact=True), CHAIN_NAMES)
+    breaks = await show_breaks(page)
+    await assert_players(breaks, STAFF_NAMES + FLORENTINE_BY_WINS[1:] + FLORENTINE_BY_WINS[:1])
     weapon = breaks.get_by_role("combobox", name="Weapon", exact=True)
-    await assert_players(chains, [f"Chain {letter}" for letter in "ABCDE"])
-    await assert_players(
-        breaks, ["Staff 1", "Staff 2", "Staff 3", "Florentine B", "Florentine C", "Florentine D", "Florentine A"]
-    )
-    await capture_state(check, page, "sidecomp-organizer-chain")
     await weapon.select_option("FLORENTINE")
     await breaks.get_by_role("button", name="Wins", exact=True).click()
-    await assert_players(breaks, FLORENTINE_BY_WINS, ranks=[4, 5, 6, 7])
-
-    # A late organizer response must not restore below-cut rows after access loss.
+    await assert_players(breaks, FLORENTINE_BY_WINS)
+    await capture_state(check, page, "sidecomp-organizer-weapon")
     old_started, old_release, old_delivered = fixture.hold_policy(True, 3)
     await asyncio.wait_for(old_started.wait(), TIMEOUT_MS / 1000)
     new_started, new_release, _ = fixture.hold_policy(False, 3)
     fixture.organizer = False
     await asyncio.wait_for(new_started.wait(), TIMEOUT_MS / 1000)
-    await expect(breaks.get_by_text("Loading standings…")).to_be_visible()
     await expect(breaks.locator("tbody tr")).to_have_count(0)
     old_release.set()
     await asyncio.wait_for(old_delivered.wait(), TIMEOUT_MS / 1000)
     await page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     await expect(breaks.locator("tbody tr")).to_have_count(0)
     new_release.set()
-    await expect(breaks.get_by_text("No published leaders match this weapon.", exact=True)).to_be_visible()
+    await assert_players(breaks, FLORENTINE_BY_WINS[:1])
     await expect(weapon).to_have_value("FLORENTINE")
     fixture.release_policies()
-    await weapon.select_option("STAFF")
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
-
-    # A smaller public cap must invalidate a selected table before old data returns.
+    # All weapons uses the configured cap; the nondefault Wins ranking requires a request.
+    await weapon.select_option("")
+    await assert_players(breaks, STAFF_NAMES)
     old_started, old_release, old_delivered = fixture.hold_policy(False, 3)
     await asyncio.wait_for(old_started.wait(), TIMEOUT_MS / 1000)
     new_started, new_release, _ = fixture.hold_policy(False, 2)
     fixture.public_limit = 2
     await asyncio.wait_for(new_started.wait(), TIMEOUT_MS / 1000)
-    await expect(breaks.get_by_text("Loading standings…")).to_be_visible()
     await expect(breaks.locator("tbody tr")).to_have_count(0)
     old_release.set()
     await asyncio.wait_for(old_delivered.wait(), TIMEOUT_MS / 1000)
     await page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     await expect(breaks.locator("tbody tr")).to_have_count(0)
     new_release.set()
-    await assert_players(breaks, ["Staff 1", "Staff 2"])
-    await expect(weapon).to_have_value("STAFF")
+    await assert_players(breaks, STAFF_NAMES[:2])
+    await expect(weapon).to_have_value("")
     await expect(breaks.locator('th[aria-sort="descending"]')).to_have_text("Wins↓")
     fixture.release_policies()
 
 
 async def verify_access_revocation(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> None:
-    """A denied response removes cached scores and identity-specific results."""
     fixture.release_policies()
     fixture.hidden = False
     fixture.public_limit = 3
-    fixture.viewer_player_id = "florentine-d"
+    fixture.viewer_player_id = OWN_ID
     fixture.organizer = False
     for status, filtered in ((403, False), (404, True)):
         await page.goto(f"{check.base_url}/demo-open/sidecomps/{fixture.comp_id}/results")
-        breaks = page.get_by_role("region", name="Breaks", exact=True)
         await expect(page.get_by_text("Rank: 6", exact=True)).to_be_visible()
+        breaks = await show_breaks(page)
         if filtered:
             await breaks.get_by_role("combobox", name="Weapon", exact=True).select_option("STAFF")
-            await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+            await assert_players(breaks, STAFF_NAMES[:1])
         fixture.denied_status = status
         await expect(page.get_by_role("alert").filter(has_text="Could not refresh results")).to_be_visible()
         await expect(page.locator(".sidecomp-standings-table")).to_have_count(0)
@@ -516,7 +555,7 @@ async def verify_access_revocation(check: SmokeCheck, page: Page, fixture: Stand
         await expect(page.get_by_role("heading", name="Your result", exact=True)).to_have_count(0)
         fixture.denied_status = None
         await expect(page.get_by_role("alert")).to_have_count(0)
-        await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+        await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
         await expect(page.get_by_text("Rank: 6", exact=True)).to_be_visible()
     check.network_errors = [
         error
@@ -526,82 +565,50 @@ async def verify_access_revocation(check: SmokeCheck, page: Page, fixture: Stand
 
 
 async def verify_bear(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> None:
-    """Bear Pit publishes overall leaders and one winner per weapon class."""
     fixture.bear = True
     fixture.viewer_player_id = None
     fixture.public_limit = 3
     await page.goto(f"{check.base_url}/demo-open/sidecomps/{fixture.comp_id}/results")
     section = page.get_by_role("region", name="Standings", exact=True)
-    overall = section.get_by_role("region", name="Standings standings", exact=True)
-    winners = page.get_by_role("region", name="Weapon class leaders standings", exact=True)
     weapon = section.get_by_role("combobox", name="Weapon", exact=True)
-    await assert_players(overall, ["Chain Champion", "Chain Runner Up", "Chain Third"])
-    await expect(winners.locator("thead th")).to_have_text(["Weapon", "Player", "Wins", "Losses", "Win %"])
-    await expect(winners.locator("tbody tr th[scope='row']")).to_have_text(list(WEAPONS.values()))
-    await expect(winners.locator("tbody tr td:nth-child(2) .fw-semibold")).to_have_text(
-        [f"{label} Champion" for label in WEAPONS.values()]
-    )
-    await expect(page.get_by_role("heading", name="Your result", exact=True)).to_have_count(0)
+    await assert_players(section, CHAIN_NAMES[:3])
+    await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
+    await expect(page.get_by_role("region", name="Weapon class leaders", exact=True)).to_have_count(0)
+    await expect(page.get_by_role("group", name="Results", exact=True)).to_have_count(0)
+    await capture_state(check, page, "sidecomp-bear-overall")
     await weapon.select_option("FLORENTINE")
-    await expect(overall.locator("tbody tr")).to_have_count(0)
-    await expect(section.get_by_text("No published leaders match this weapon.", exact=True)).to_be_visible()
-    await expect(winners.locator("tbody tr th[scope='row']")).to_have_text(["Florentine"])
-    await expect(winners.locator("tbody tr td:nth-child(2) .fw-semibold")).to_have_text(["Florentine Champion"])
-
-    # A nonwinning player sees their personal score without joining either leaders list.
-    fixture.viewer_player_id = "florentine-d"
+    await assert_players(section, [BEAR_CLASS_NAMES[4]])
+    fixture.viewer_player_id = OWN_ID
     await page.reload()
-    await expect(page.get_by_text("Rank: 11", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Wins: 3", exact=True)).to_be_visible()
-    await expect(page.get_by_text("Losses: 2", exact=True)).to_be_visible()
-    await expect(page.get_by_text(re.compile(r"^Win percentage: 60(?:\.0)?%$"))).to_be_visible()
-    await assert_players(overall, ["Chain Champion", "Chain Runner Up", "Chain Third"])
-    await expect(winners.locator("tbody tr")).to_have_count(8)
-    await capture_state(check, page, "sidecomp-personal-bear")
+    personal = page.get_by_role("region", name="Your result", exact=True)
+    await expect(personal.get_by_text("Overall · Florentine", exact=True)).to_be_visible()
+    await expect(personal.get_by_text("Rank: 11", exact=True)).to_be_visible()
+    await expect(personal.get_by_text("Wins: 3", exact=True)).to_be_visible()
+    await expect(personal.get_by_text("Losses: 2", exact=True)).to_be_visible()
+    await expect(personal.get_by_text(re.compile(r"^Win percentage: 60(?:\.0)?%$"))).to_be_visible()
+    await weapon.select_option("FLORENTINE")
+    await assert_players(section, [BEAR_CLASS_NAMES[4]])
+    await capture_state(check, page, "sidecomp-bear-personal-weapon")
     await weapon.select_option("STAFF")
-    await expect(page.get_by_text("Rank: 11", exact=True)).to_be_visible()
-    await expect(winners.locator("tbody tr th[scope='row']")).to_have_text(["Staff"])
-    fixture.viewer_player_id = "florentine-champion"
+    await assert_players(section, [BEAR_CLASS_NAMES[2]])
+    await expect(personal.get_by_text("Rank: 11", exact=True)).to_be_visible()
+    fixture.viewer_player_id = BEAR_CLASS_NAMES[4].lower().replace(" ", "-")
     await page.reload()
-    await expect(page.get_by_text("Rank: 8", exact=True)).to_be_visible()
-    await expect(winners.locator("tbody").get_by_text("You", exact=True)).to_have_count(1)
-    own_winner = winners.locator("tbody tr").filter(has=page.get_by_text("You", exact=True))
-    await expect(own_winner.locator("th[scope='row']")).to_have_text("Florentine")
-    await expect(overall.locator("tbody").get_by_text("You", exact=True)).to_have_count(0)
+    await weapon.select_option("FLORENTINE")
+    await assert_players(section, [BEAR_CLASS_NAMES[4]], own_name=BEAR_CLASS_NAMES[4])
+    await expect(section.locator("tbody").get_by_text("You", exact=True)).to_have_count(1)
     fixture.hidden = True
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(0)
-    await expect(page.get_by_role("heading", name="Your result", exact=True)).to_have_count(0)
-    await expect(page.get_by_role("region", name="Weapon class leaders", exact=True)).to_have_count(0)
+    await expect(personal).to_have_count(0)
     fixture.hidden = False
-
-    # Changing the competition type invalidates class leaders from an older response.
-    await expect(winners.locator("tbody tr")).to_have_count(8)
-    await weapon.select_option("STAFF")
-    await expect(winners.locator("tbody tr th[scope='row']")).to_have_text(["Staff"])
-    old_started, old_release, old_delivered = fixture.hold_policy(False, 3, "DUELING")
-    await asyncio.wait_for(old_started.wait(), TIMEOUT_MS / 1000)
-    new_started, new_release, _ = fixture.hold_policy(False, 3, "OTHER")
     fixture.bear = False
-    fixture.generic = True
-    await asyncio.wait_for(new_started.wait(), TIMEOUT_MS / 1000)
-    await expect(section.get_by_text("Loading standings…")).to_be_visible()
-    await expect(page.get_by_role("region", name="Weapon class leaders", exact=True)).to_have_count(0)
-    old_release.set()
-    await asyncio.wait_for(old_delivered.wait(), TIMEOUT_MS / 1000)
-    await page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
-    await expect(page.get_by_role("region", name="Weapon class leaders", exact=True)).to_have_count(0)
-    new_release.set()
-    await expect(section.get_by_text("No published leaders match this weapon.", exact=True)).to_be_visible()
-    await expect(weapon).to_have_value("STAFF")
-    fixture.release_policies()
 
 
 async def verify_account_change(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> None:
-    """Returning after logout cannot restore cached personal or organizer rows."""
-    fixture.viewer_player_id = "florentine-d"
+    fixture.viewer_player_id = OWN_ID
     fixture.organizer = True
     await page.goto(f"{check.base_url}/demo-open/sidecomps/{fixture.comp_id}/results")
-    breaks = page.get_by_role("region", name="Breaks", exact=True)
+    breaks = await show_breaks(page)
     await expect(page.get_by_text("Rank: 6", exact=True)).to_be_visible()
     await expect(breaks.locator("tbody tr")).to_have_count(7)
     fixture.delay_next("FLORENTINE")
@@ -619,7 +626,8 @@ async def verify_account_change(check: SmokeCheck, page: Page, fixture: Standing
     await page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(0)
     fixture.fail_metadata = False
-    await assert_players(breaks, ["Staff 1", "Staff 2", "Staff 3"])
+    await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
+    await expect(page.locator(".sidecomp-standings-table tbody tr")).to_have_count(3)
     await expect(page.get_by_role("heading", name="Your result", exact=True)).to_have_count(0)
     await expect(page.locator(".sidecomp-standing-self")).to_have_count(0)
     check.network_errors = [
@@ -681,12 +689,12 @@ async def verify_weapon_choices(check: SmokeCheck, page: Page, fixture: Standing
     await expect(section.locator('th[aria-sort="descending"]')).to_have_text("Win %↓")
     await expect(section.locator("thead th")).to_have_count(5)
 
-    for rank, (value, label) in enumerate(WEAPONS.items(), start=1):
+    for value, label in WEAPONS.items():
         await weapon.select_option(value)
-        expected_name = {"CHAIN": LONG_NAME, "LONG": UNBROKEN_NAME}.get(value, f"{label} Player")
-        await assert_players(section, [expected_name], ranks=[rank])
+        await assert_players(section, [WEAPON_NAMES[value]])
         await expect(section.locator(".sidecomp-standing-weapon")).to_have_text(label)
-    await expect(section.locator("tbody td:last-child")).to_have_text("—")
+    # A loss-only entrant still competed and remains selectable.
+    await expect(section.locator("tbody td:last-child")).to_have_text("0%")
 
     # Native select keyboard behavior keeps all options reachable without a pointer.
     await page.keyboard.press("Tab")
@@ -696,7 +704,7 @@ async def verify_weapon_choices(check: SmokeCheck, page: Page, fixture: Standing
     await expect(section.locator("tbody tr")).to_have_count(8)
     await page.keyboard.press("End")
     await expect(weapon).to_have_value("UNARMED")
-    await assert_players(section, ["Unarmed Player"], ranks=[8])
+    await assert_players(section, [WEAPON_NAMES["UNARMED"]])
     await page.keyboard.press("Home")
     await page.keyboard.press("ArrowDown")
     await expect(weapon).to_have_value("CHAIN")
@@ -721,12 +729,35 @@ async def verify_weapon_choices(check: SmokeCheck, page: Page, fixture: Standing
 
     # Polling removes an unavailable option and restores the complete table.
     await weapon.select_option("SKULL")
-    await assert_players(section, ["Skull Player"], ranks=[7])
+    await assert_players(section, [WEAPON_NAMES["SKULL"]])
     fixture.removed_weapon = "SKULL"
     await expect(weapon.locator('option[value="SKULL"]')).to_have_count(0)
     await expect(weapon).to_have_value("")
     await expect(section.locator("tbody tr")).to_have_count(7)
     fixture.removed_weapon = None
+    await expect(weapon.locator("option")).to_have_count(9)
+    await expect(section.locator("tbody tr")).to_have_count(8)
+
+    # Registered entries without valid scores do not create selectable classes.
+    await weapon.select_option("BOARD")
+    await assert_players(section, [WEAPON_NAMES["BOARD"]])
+    fixture.unplayed_weapons.add("BOARD")
+    await expect(weapon.locator('option[value="BOARD"]')).to_have_count(0)
+    await expect(weapon).to_have_value("")
+    await expect(section.locator("tbody tr")).to_have_count(8)
+    fixture.unplayed_weapons.clear()
+    await expect(weapon.locator("option")).to_have_count(9)
+    fixture.no_scores = True
+    await expect(weapon).to_have_count(0)
+    await expect(section.locator("tbody tr")).to_have_count(8)
+    await expect(section.locator("tbody td:last-child")).to_have_text(["—"] * 8)
+    fixture.no_scores = False
+    await expect(weapon.locator("option")).to_have_count(9)
+    fixture.empty = True
+    await expect(section.get_by_text("No results yet.", exact=True)).to_be_visible()
+    await expect(section.locator("tbody tr")).to_have_count(0)
+    await expect(weapon).to_have_count(0)
+    fixture.empty = False
     await expect(weapon.locator("option")).to_have_count(9)
     await expect(section.locator("tbody tr")).to_have_count(8)
     await page.set_viewport_size({"width": 390, "height": 900})

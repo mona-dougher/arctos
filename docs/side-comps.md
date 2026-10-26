@@ -16,9 +16,9 @@ chains and breakers.
 
 The public result limit controls publication:
 
-- **Three:** publish the top three in each table. This is the initial value in
+- **Three:** publish the top three with **All weapons** selected. This is the initial value in
   the creation form.
-- **Another positive number:** publish that many leaders in each table.
+- **Another positive number:** publish that many leaders with **All weapons** selected.
 - **Blank:** publish every ranked player.
 - **Zero:** hide results, including personal results.
 
@@ -27,29 +27,29 @@ competition preserves its publication settings.
 
 ## Standings
 
-Chain Pits use the **Chain/breaking** type. Chains and Breaks have separate
-standings tables. Bear Pits use **Dueling**, with an overall table and a
-**Weapon class leaders** table containing one leader for each represented class.
-Classes include Chain, Long, Q-Tip, Staff, Board, Florentine, Skull, and Unarmed.
-Other competitions have one standings table.
+The results page shows one standings table. Chain Pits use **Chain/breaking**;
+choose **Chains** or **Breaks** above the table. Bear Pits use **Dueling**.
 
-Each table ranks complete registrations by wins, or by win percentage when
-losses are tracked. Selecting **Wins** or **Win %** changes that ranking. Ties in
-win percentage are resolved by wins, then entry number. Ties in wins are
-resolved by entry number. Unplayed entries follow played entries in the
-win-percentage ranking.
+**All weapons** shows the configured number of leaders, starting at three.
+Choosing a weapon shows its top player. Organizers can see every matching player;
+a blank public limit also publishes every matching player.
 
-The public limit selects leaders from the complete ranking. The **Weapon**
-selector filters those published leaders and the class leaders. Organizers can
-filter the complete standings. Rank numbers always refer to the whole table.
-Each table keeps its weapon and ranking selection during live updates.
+The **Weapon** dropdown includes weapons used by complete entries with at least
+one valid result. A recorded loss counts as participation. Available categories
+are Chain, Long, Q-Tip, Staff, Board, Florentine, Skull, and Unarmed. A weapon
+appears when its first valid result is recorded. If the selected weapon has no
+valid results, the view returns to **All weapons**.
 
-Signed-in players see **Your result**, including their rank and scores, even
-when their entry falls below the public limit. This card uses the table's
-default ranking and remains visible while browsing weapons. Their visible
-standings rows carry a **You** label.
+Rank numbers apply to the selected weapon or group. Standings use wins, or win
+percentage when losses are tracked. Select **Wins** or **Win %** to change the
+ranking. Percentage ties use wins, then entry number; wins ties use entry number.
+Unplayed entries follow played entries when ranking by percentage.
 
-Results remain unofficial until an organizer finalizes the competition.
+Signed-in players see **Your result** above the table, including their overall
+or group rank and scores. This card uses the default ranking and stays visible
+while filtering. Their rows carry a **You** label.
+
+Results update while the page is open and remain unofficial until finalized.
 
 ## Recording and reviewing results
 

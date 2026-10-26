@@ -30,14 +30,12 @@ struct StandingSelection {
 struct PublicationPolicy {
     showing_all_results: bool,
     public_limit: Option<i32>,
-    publishes_class_leaders: bool,
 }
 impl PublicationPolicy {
     fn from_standings(standings: &SideCompStandings) -> Self {
         Self {
             showing_all_results: standings.showing_all_results,
             public_limit: standings.only_show_top_n_results,
-            publishes_class_leaders: standings.type_ == "DUELING",
         }
     }
 }
@@ -113,22 +111,10 @@ fn StandingRowView(
     row: SideCompStandingRow,
     track_losses: bool,
     viewer_player_id: Option<String>,
-    class_leader: bool,
 ) -> Element {
     rsx! {
         tr {
-            if class_leader {
-                th { scope: "row", class: "sidecomp-class-name",
-                    {
-                        row.weapon
-                            .as_deref()
-                            .map(|weapon| pompfen_by_id(weapon).map_or(weapon, |option| option.label))
-                            .unwrap_or("—")
-                    }
-                }
-            } else {
-                td { class: "table-number", "{row.rank}" }
-            }
+            td { class: "table-number", "{row.rank}" }
             td { class: "table-copy",
                 div { class: "sidecomp-standing-player",
                     StandingAvatar { photo: row.profile_photo.clone(), is_team: false }
@@ -195,13 +181,13 @@ fn PersonalResult(table: SideCompStandingTable, row: SideCompStandingRow) -> Ele
         .as_deref()
         .map(|weapon| pompfen_by_id(weapon).map_or(weapon, |option| option.label))
         .unwrap_or("—");
-    let ranking = if table.track_losses { "win percentage" } else { "wins" };
+    let group = if table.id == "all" { "Overall" } else { table.title.as_str() };
     rsx! {
         section { class: "card mb-4", aria_label: "Your result",
             div { class: "card-body",
                 h3 { class: "h5 mb-1", "Your result" }
                 p { class: "small text-muted mb-2",
-                    "{table.title} · {weapon} · Ranked by {ranking}"
+                    "{group} · {weapon}"
                 }
                 div { class: "d-flex flex-wrap gap-3",
                     strong { "Rank: {row.rank}" }
@@ -217,9 +203,6 @@ fn PersonalResult(table: SideCompStandingTable, row: SideCompStandingRow) -> Ele
                             }
                         }
                     }
-                }
-                p { class: "small text-muted mt-2 mb-0",
-                    "Your rank includes every player in this table."
                 }
             }
         }
@@ -341,15 +324,11 @@ fn StandingsTableView(
         weapon_name.as_deref().unwrap_or("All weapons"),
     );
     let weapon_select_id = format!("sidecomp-{comp_id}-{}-weapon", table.id);
-    let class_winners = match &displayed_table {
-        Some(Ok(loaded)) => loaded.class_winners.clone(),
-        _ => Vec::new(),
-    };
     rsx! {
         section { class: "mb-4", aria_label: "{table.title}",
             div { class: "d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2",
-                h3 { class: "h4 mb-0", "{table.title}" }
-                if table.available_weapons.len() > 1 {
+                h3 { class: "visually-hidden", "{table.title}" }
+                if !table.available_weapons.is_empty() {
                     div { class: "sidecomp-weapon-filter",
                         label {
                             r#for: weapon_select_id.clone(),
@@ -375,7 +354,6 @@ fn StandingsTableView(
                     }
                 }
             }
-            p { class: "small text-muted mb-2", "{summary}. Ranks are for the whole table." }
             if displayed_table.is_none() {
                 p { role: "status", class: "text-muted", "Loading standings…" }
             }
@@ -393,11 +371,7 @@ fn StandingsTableView(
             }
             if matches!(&displayed_table, Some(Ok(_))) && rows.is_empty() {
                 p { class: "text-muted",
-                    if publication_policy.showing_all_results {
-                        "No players match this weapon."
-                    } else {
-                        "No published leaders match this weapon."
-                    }
+                    "No results yet."
                 }
             }
             div {
@@ -442,61 +416,12 @@ fn StandingsTableView(
                                 row: row.clone(),
                                 track_losses: table.track_losses,
                                 viewer_player_id: viewer_player_id.clone(),
-                                class_leader: false,
                             }
                         }
                     }
                 }
             }
-            if !class_winners.is_empty() {
-                section { class: "mt-4", aria_label: "Weapon class leaders",
-                    h4 { class: "h5", "Weapon class leaders" }
-                    p { class: "small text-muted",
-                        "One leader per weapon class, ranked by {ranking_name}."
-                    }
-                    div {
-                        class: "table-responsive",
-                        role: "region",
-                        aria_label: "Weapon class leaders standings",
-                        tabindex: "0",
-                        table { class: "table table-striped align-middle sidecomp-standings-table sidecomp-class-leaders",
-                            caption { class: "visually-hidden",
-                                "Weapon class leaders. {summary}. One leader per class."
-                            }
-                            thead {
-                                tr {
-                                    th { scope: "col", "Weapon" }
-                                    th { scope: "col", "Player" }
-                                    th { scope: "col", class: "table-number", "Wins" }
-                                    if table.track_losses {
-                                        th {
-                                            scope: "col",
-                                            class: "table-number",
-                                            "Losses"
-                                        }
-                                        th {
-                                            scope: "col",
-                                            class: "table-number",
-                                            "Win %"
-                                        }
-                                    }
-                                }
-                            }
-                            tbody {
-                                for row in class_winners {
-                                    StandingRowView {
-                                        key: "{row.registration_id}",
-                                        row,
-                                        track_losses: table.track_losses,
-                                        viewer_player_id: viewer_player_id.clone(),
-                                        class_leader: true,
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+
         }
     }
 }
@@ -504,6 +429,7 @@ fn StandingsTableView(
 #[component]
 pub fn SideCompResults(url: String, comp_id: i32) -> Element {
     let account = crate::auth::use_account();
+    let mut selected_group = use_signal(String::new);
     let viewer_identity = account
         .read()
         .as_ref()
@@ -580,6 +506,11 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
                         } else {
                             let publication_policy = PublicationPolicy::from_standings(&data);
                             let tables = data.tables.clone();
+                            let selected_id = selected_group();
+                            let active_table = tables.iter()
+                                .find(|table| table.id == selected_id)
+                                .or_else(|| tables.first())
+                                .cloned();
                             let name = data.name.clone();
                             let title = if data.finalized {
                                 format!("{name} - Results (Final)")
@@ -588,17 +519,6 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
                             };
                             rsx! {
                                 h2 { "{title}" }
-                                p { class: "text-muted",
-                                    if data.showing_all_results {
-                                        "Complete standings. Filter by weapon or choose a ranking column."
-                                    } else if data.type_ == "CHAIN_BREAKING" {
-                                        "Top {data.only_show_top_n_results.unwrap_or(3)} Chains and top {data.only_show_top_n_results.unwrap_or(3)} Breaks."
-                                    } else if data.type_ == "DUELING" {
-                                        "Top {data.only_show_top_n_results.unwrap_or(3)} overall, plus one leader from each weapon class."
-                                    } else {
-                                        "Top {data.only_show_top_n_results.unwrap_or(3)} players."
-                                    }
-                                }
                                 for table in &tables {
                                     if let Some(row) = table
                                         .personal_row
@@ -608,7 +528,25 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
                                         PersonalResult { table: table.clone(), row: row.clone() }
                                     }
                                 }
-                                for table in tables.into_iter() {
+                                if tables.len() > 1 {
+                                    fieldset { class: "d-flex flex-wrap gap-4 mb-3",
+                                        legend { class: "visually-hidden", "Results" }
+                                        for table in &tables {
+                                            label { class: "sidecomp-group-option",
+                                                input {
+                                                    class: "form-check-input m-0",
+                                                    r#type: "radio",
+                                                    name: "sidecomp-{comp_id}-group",
+                                                    value: table.id.clone(),
+                                                    checked: active_table.as_ref().is_some_and(|active| active.id == table.id),
+                                                    onchange: move |event| selected_group.set(event.value()),
+                                                }
+                                                span { "{table.title}" }
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some(table) = active_table {
                                     StandingsTableView {
                                         key: "{table.id}-{viewer_key}",
                                         comp_id,

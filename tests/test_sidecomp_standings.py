@@ -51,7 +51,7 @@ def chain_pit(tournament):
     return comp
 
 
-def test_public_weapon_filter_preserves_whole_table_cut_and_ranks(client, chain_pit):
+def test_public_weapon_filter_selects_its_leader_before_the_cut(client, chain_pit):
     path = f"/_api/sidecomps/{chain_pit.id}/standings"
     initial = client.get(path).get_json()
     assert initial["showing_all_results"] is False
@@ -67,13 +67,14 @@ def test_public_weapon_filter_preserves_whole_table_cut_and_ranks(client, chain_
     assert filtered["weapon"] == "FLORENTINE"
     assert filtered["sort"] == "wins"
     assert filtered["available_weapons"] == breaks["available_weapons"]
-    assert filtered["rows"] == []
+    assert [row["player_id"] for row in filtered["rows"]] == ["florentine-0"]
+    assert filtered["rows"][0]["rank"] == 1
     assert filtered["personal_row"] is None
-    assert filtered["class_winners"] == []
+    assert "class_winners" not in filtered
 
     [staff] = client.get(path, query_string={"table": "breaks", "weapon": "STAFF"}).get_json()["tables"]
-    assert [row["rank"] for row in staff["rows"]] == [1, 2, 3]
-    assert [row["wins"] for row in staff["rows"]] == [9, 8, 7]
+    assert [row["rank"] for row in staff["rows"]] == [1]
+    assert [row["wins"] for row in staff["rows"]] == [9]
 
     [chains] = client.get(path, query_string={"table": "chains"}).get_json()["tables"]
     assert [row["player_id"] for row in chains["rows"]] == ["chain-0", "chain-1", "chain-2"]
@@ -99,15 +100,12 @@ def test_sort_selection_precedes_limit_and_respects_each_tables_loss_setting(cli
 
     [by_percentage] = client.get(path, query_string=selection).get_json()["tables"]
     assert by_percentage["sort"] == "win_percentage"
-    assert [row["player_id"] for row in by_percentage["rows"]] == [
-        "florentine-1",
-        "florentine-2",
-        "florentine-3",
-    ]
+    assert [row["player_id"] for row in by_percentage["rows"]] == ["florentine-1"]
 
     [by_wins] = client.get(path, query_string={**selection, "sort": "wins"}).get_json()["tables"]
     assert by_wins["sort"] == "wins"
-    assert by_wins["rows"] == []
+    assert [row["player_id"] for row in by_wins["rows"]] == ["florentine-0"]
+    assert by_wins["rows"][0]["rank"] == 1
 
     login_as(client, db.session.get(Player, "florentine-0"))
     # The fixture keeps an app context open across requests; reload its viewer.
@@ -137,9 +135,7 @@ def test_filtered_ties_use_entry_number_and_unplayed_entries_follow_played(clien
     response = client.get(f"/_api/sidecomps/{comp.id}/standings?table=all&weapon=FLORENTINE&sort=win_percentage")
     [table] = response.get_json()["tables"]
     assert [row["player_id"] for row in table["rows"]] == ["busy", "early", "late", "unplayed"]
-    assert [row["rank"] for row in table["rows"]] == [2, 3, 4, 5]
-    assert table["class_winners"][0]["player_id"] == "busy"
-    assert table["class_winners"][0]["rank"] == 2
+    assert [row["rank"] for row in table["rows"]] == [1, 2, 3, 4]
     assert table["rows"][-1]["win_percentage"] is None
 
 
@@ -267,7 +263,7 @@ def test_hidden_results_do_not_return_rows_to_any_viewer(client, tournament, cha
     assert payload["showing_all_results"] is False
     assert all(table["rows"] == [] for table in payload["tables"])
     assert all(table["personal_row"] is None for table in payload["tables"])
-    assert all(table["class_winners"] == [] for table in payload["tables"])
+    assert all("class_winners" not in table for table in payload["tables"])
 
 
 @pytest.mark.parametrize("include_below_cut", [False, True])
@@ -281,7 +277,7 @@ def test_full_service_view_cannot_reveal_hidden_results(chain_pit, include_below
     assert payload["showing_all_results"] is False
     assert all(table["rows"] == [] for table in payload["tables"])
     assert all(table["personal_row"] is None for table in payload["tables"])
-    assert all(table["class_winners"] == [] for table in payload["tables"])
+    assert all("class_winners" not in table for table in payload["tables"])
 
 
 @pytest.mark.parametrize(
@@ -351,29 +347,26 @@ def bear_pit(tournament):
     return comp
 
 
-def test_bear_pit_publishes_overall_leaders_and_all_eight_class_leaders(client, bear_pit):
+def test_bear_pit_publishes_overall_leaders_with_all_eight_competed_choices(client, bear_pit):
     payload = client.get(f"/_api/sidecomps/{bear_pit.id}/standings").get_json()
     [table] = payload["tables"]
     assert [row["player_id"] for row in table["rows"]] == ["CHAIN-leader", "LONG-leader", "QTIP-leader"]
     assert [row["rank"] for row in table["rows"]] == [1, 2, 3]
-    assert [row["weapon"] for row in table["class_winners"]] == [weapon.name for weapon in Pompfen]
-    assert [row["rank"] for row in table["class_winners"]] == list(range(1, 9))
-    assert all(row["player_id"].endswith("-leader") for row in table["class_winners"])
+    assert table["available_weapons"] == [weapon.name for weapon in Pompfen]
+    assert "class_winners" not in table
     assert table["personal_row"] is None
     assert payload["showing_all_results"] is False
 
 
-@pytest.mark.parametrize("weapon, expected_ranks", [("LONG", [2]), ("UNARMED", [])])
-def test_bear_filter_preserves_overall_ranks_and_returns_only_that_class_leader(
-    client, bear_pit, weapon, expected_ranks
-):
+@pytest.mark.parametrize("weapon", [weapon.name for weapon in Pompfen])
+def test_each_competed_weapon_displays_its_leader_in_the_same_table(client, bear_pit, weapon):
     [table] = client.get(f"/_api/sidecomps/{bear_pit.id}/standings", query_string={"weapon": weapon}).get_json()[
         "tables"
     ]
-    assert [row["rank"] for row in table["rows"]] == expected_ranks
-    assert [row["weapon"] for row in table["class_winners"]] == [weapon]
-    assert table["class_winners"][0]["player_id"] == f"{weapon}-leader"
-    assert table["class_winners"][0]["rank"] == (2 if weapon == "LONG" else 8)
+    assert [row["rank"] for row in table["rows"]] == [1]
+    assert [row["weapon"] for row in table["rows"]] == [weapon]
+    assert table["rows"][0]["player_id"] == f"{weapon}-leader"
+    assert "class_winners" not in table
 
 
 def test_bear_participant_gets_only_their_own_row_beyond_public_results(client, bear_pit):
@@ -413,11 +406,11 @@ def test_incomplete_player_does_not_receive_a_personal_standing(client, bear_pit
     login_as(client, db.session.get(Player, "incomplete-bear"))
     [table] = client.get(f"/_api/sidecomps/{bear_pit.id}/standings").get_json()["tables"]
     assert table["personal_row"] is None
-    assert all(row["player_id"] != "incomplete-bear" for row in table["rows"] + table["class_winners"])
+    assert all(row["player_id"] != "incomplete-bear" for row in table["rows"])
 
 
 @pytest.mark.parametrize("unlimited", [False, True])
-def test_complete_bear_standings_keep_whole_table_ranks_under_filter(client, tournament, bear_pit, unlimited):
+def test_complete_bear_standings_rank_all_entries_within_the_selected_weapon(client, tournament, bear_pit, unlimited):
     if unlimited:
         bear_pit.only_show_top_n_results = None
         db.session.commit()
@@ -427,10 +420,10 @@ def test_complete_bear_standings_keep_whole_table_ranks_under_filter(client, tou
     assert payload["showing_all_results"] is True
     [table] = payload["tables"]
     assert [row["player_id"] for row in table["rows"]] == ["UNARMED-leader", "UNARMED-second"]
-    assert [row["rank"] for row in table["rows"]] == [8, 16]
+    assert [row["rank"] for row in table["rows"]] == [1, 2]
 
 
-def test_class_leader_uses_selected_sort_and_stable_tie_breaks(client, bear_pit):
+def test_weapon_leader_uses_selected_sort_and_stable_tie_breaks(client, bear_pit):
     bear_pit.track_losses = True
     leader = SideCompRegistration.query.filter_by(comp=bear_pit.id, player="CHAIN-leader").one()
     second = SideCompRegistration.query.filter_by(comp=bear_pit.id, player="CHAIN-second").one()
@@ -440,34 +433,39 @@ def test_class_leader_uses_selected_sort_and_stable_tie_breaks(client, bear_pit)
         db.session.add(SideCompResult(comp=bear_pit.id, player=second.id, points=1, ref="ref"))
     db.session.commit()
     path = f"/_api/sidecomps/{bear_pit.id}/standings"
-    [by_percentage] = client.get(path).get_json()["tables"]
-    assert by_percentage["class_winners"][0]["player_id"] == "CHAIN-second"
-    [by_wins] = client.get(path, query_string={"sort": "wins"}).get_json()["tables"]
-    assert by_wins["class_winners"][0]["player_id"] == "CHAIN-leader"
+    [by_percentage] = client.get(path, query_string={"weapon": "CHAIN"}).get_json()["tables"]
+    assert by_percentage["rows"][0]["player_id"] == "CHAIN-second"
+    [by_wins] = client.get(path, query_string={"weapon": "CHAIN", "sort": "wins"}).get_json()["tables"]
+    assert by_wins["rows"][0]["player_id"] == "CHAIN-leader"
 
     _add_entry(bear_pit, "CHAIN-tied", Pompfen.CHAIN, 10, 10)
+    [leader] = client.get(path, query_string={"weapon": "CHAIN", "sort": "wins"}).get_json()["tables"]
+    assert leader["rows"][0]["player_id"] == "CHAIN-leader"
     [tied] = client.get(path, query_string={"sort": "wins"}).get_json()["tables"]
-    assert tied["class_winners"][0]["player_id"] == "CHAIN-leader"
     assert [row["rank"] for row in tied["rows"]] == [1, 2, 3]
     assert [row["player_id"] for row in tied["rows"][:2]] == ["CHAIN-leader", "CHAIN-tied"]
 
 
-def test_hidden_bear_results_include_neither_personal_nor_class_leaders(client, bear_pit):
+def test_hidden_bear_results_include_neither_public_nor_personal_rows(client, bear_pit):
     bear_pit.only_show_top_n_results = 0
     db.session.commit()
     login_as(client, db.session.get(Player, "UNARMED-second"))
     [table] = client.get(f"/_api/sidecomps/{bear_pit.id}/standings").get_json()["tables"]
     assert table["rows"] == []
     assert table["personal_row"] is None
-    assert table["class_winners"] == []
+    assert "class_winners" not in table
 
 
-def test_other_competitions_keep_the_configured_summary_without_class_leaders(client, bear_pit):
+def test_other_competitions_use_the_same_table_and_weapon_limit(client, bear_pit):
     bear_pit.type = "OTHER"
     db.session.commit()
     [table] = client.get(f"/_api/sidecomps/{bear_pit.id}/standings").get_json()["tables"]
     assert len(table["rows"]) == 3
-    assert table["class_winners"] == []
+    assert "class_winners" not in table
+    [filtered] = client.get(f"/_api/sidecomps/{bear_pit.id}/standings", query_string={"weapon": "UNARMED"}).get_json()[
+        "tables"
+    ]
+    assert [row["player_id"] for row in filtered["rows"]] == ["UNARMED-leader"]
 
 
 def test_external_bear_summary_keeps_existing_schema_and_cutoff(client, tournament, bear_pit):
@@ -486,4 +484,83 @@ def test_default_service_summary_keeps_filter_before_limit_contract(chain_pit):
     assert [row["player_id"] for row in table["rows"]] == ["florentine-0", "florentine-1", "florentine-2"]
     assert [row["rank"] for row in table["rows"]] == [1, 2, 3]
     assert table["personal_row"] is None
-    assert table["class_winners"] == []
+    assert "class_winners" not in table
+
+
+@pytest.mark.parametrize("track_losses", [False, True])
+def test_weapon_choices_require_valid_results_and_include_loss_only_entries(client, tournament, track_losses):
+    comp = SideComp(
+        event=tournament.url, name="Participation", type="DUELING", only_show_top_n_results=3, track_losses=track_losses
+    )
+    db.session.add(comp)
+    db.session.commit()
+    _add_entry(comp, "registered-only", Pompfen.CHAIN, 0)
+    invalid = _add_entry(comp, "invalid-only", Pompfen.LONG, 0)
+    db.session.add(SideCompResult(comp=comp.id, player=invalid.id, points=1, ref="ref", valid=False))
+    loss = _add_entry(comp, "loss-only", Pompfen.QTIP, 0, 1)
+    flagged = _add_entry(comp, "flagged-valid", Pompfen.STAFF, 1)
+    SideCompResult.query.filter_by(player=flagged.id).one().flagged = True
+    deleted = _add_entry(comp, "deleted-only", Pompfen.BOARD, 1)
+    SideCompResult.query.filter_by(player=deleted.id).delete()
+    _add_entry(comp, "incomplete-scored", None, 3)
+    _add_entry(comp, "played", Pompfen.FLORENTINE, 2)
+    db.session.commit()
+    path = f"/_api/sidecomps/{comp.id}/standings"
+
+    [table] = client.get(path).get_json()["tables"]
+    assert table["available_weapons"] == ["QTIP", "STAFF", "FLORENTINE"]
+    [loss_table] = client.get(path, query_string={"weapon": "QTIP"}).get_json()["tables"]
+    assert loss_table["rows"][0]["player_id"] == "loss-only"
+    assert loss_table["rows"][0]["wins"] == 0
+
+    SideCompResult.query.filter_by(player=loss.id).one().valid = False
+    db.session.commit()
+    response = client.get(path, query_string={"weapon": "QTIP"})
+    assert response.status_code == 200
+    [invalidated] = response.get_json()["tables"]
+    assert invalidated["available_weapons"] == ["STAFF", "FLORENTINE"]
+    assert invalidated["rows"] == []
+
+
+@pytest.mark.parametrize("is_organizer", [False, True])
+@pytest.mark.parametrize("top_n", [None, 3])
+def test_unplayed_weapons_are_not_selectable_but_complete_registrations_remain_in_all_results(
+    client, tournament, is_organizer, top_n
+):
+    comp = SideComp(event=tournament.url, name="No scores", type="DUELING", only_show_top_n_results=top_n)
+    db.session.add(comp)
+    db.session.commit()
+    _add_entry(comp, "unplayed-chain", Pompfen.CHAIN, 0)
+    _add_entry(comp, "unplayed-long", Pompfen.LONG, 0)
+    if is_organizer:
+        _set_viewer(client, tournament, "tournament", "player-organizer")
+    else:
+        login_as(client, db.session.get(Player, "unplayed-chain"))
+    path = f"/_api/sidecomps/{comp.id}/standings"
+    [table] = client.get(path).get_json()["tables"]
+    assert table["available_weapons"] == []
+    assert [row["player_id"] for row in table["rows"]] == ["unplayed-chain", "unplayed-long"]
+    if not is_organizer:
+        assert table["personal_row"]["player_id"] == "unplayed-chain"
+        assert table["personal_row"]["rank"] == 1
+
+    response = client.get(path, query_string={"weapon": "LONG"})
+    assert response.status_code == 200
+    [filtered] = response.get_json()["tables"]
+    assert filtered["available_weapons"] == []
+    assert filtered["rows"] == []
+    assert filtered["personal_row"] == table["personal_row"]
+
+
+@pytest.mark.parametrize("comp_type", ["DUELING", "CHAIN_BREAKING", "OTHER"])
+def test_competition_without_entries_has_empty_rows_and_weapon_choices(client, tournament, comp_type):
+    comp = SideComp(event=tournament.url, name="Empty", type=comp_type, only_show_top_n_results=3)
+    db.session.add(comp)
+    db.session.commit()
+    response = client.get(f"/_api/sidecomps/{comp.id}/standings")
+    assert response.status_code == 200
+    for table in response.get_json()["tables"]:
+        assert table["rows"] == []
+        assert table["available_weapons"] == []
+        assert table["personal_row"] is None
+        assert "class_winners" not in table

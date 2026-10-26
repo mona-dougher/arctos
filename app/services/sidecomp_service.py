@@ -266,8 +266,8 @@ class SideCompService:
             allowed_weapons: Optional list of :class:`~app.domain.enums.Pompfen`
                 names. Defaults to all pompfen options when omitted.
             only_show_top_n_results: Optional public standings limit.
-                ``None`` means show all; ``0`` hides results. Dueling also
-                publishes one leader per weapon class.
+                ``None`` means show all; ``0`` hides results. A selected
+                weapon shows its leader when public results are limited.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the persisted
@@ -429,8 +429,8 @@ class SideCompService:
                 names. If ``None``, the field is left untouched.
             only_show_top_n_results: Sentinel ``...`` leaves the field untouched.
                 Explicit ``None`` clears it (show all). ``0`` hides results.
-                Positive ints limit public tables to the top N. Dueling also
-                publishes one leader per weapon class.
+                Positive ints limit public tables to the top N; a selected
+                weapon shows its leader.
 
         Returns:
             :class:`~app.error_values.Ok` wrapping the updated
@@ -1231,17 +1231,18 @@ class SideCompService:
     ) -> Result[dict, ArctosError]:
         """Compute standings tables for *comp_id*.
 
-        ``application_view`` publishes leaders from each whole ranked table
-        before weapon filtering and adds dueling leaders for each weapon class.
-        Personal standings also retain the whole-table rank and are independent
-        of the selected weapon. The external API uses the default summary,
-        which filters before ranking and limiting rows.
+        ``application_view`` limits weapon choices to complete registrations
+        with valid results. The public table shows the configured number of
+        leaders, or one leader when a weapon is selected. Filtered table ranks
+        are relative to that weapon. Personal standings retain the whole-table
+        rank and are independent of the selected weapon. The external API uses
+        the default summary with the configured limit for every selection.
 
         ``include_below_cut`` returns complete standings for an organizer.
         ``viewer_player_id`` adds only that player's own standing. Callers must
         derive both values from the authenticated viewer. A zero limit hides
-        every result, including personal standings and class leaders. Only
-        valid results count toward wins and losses.
+        every result, including personal standings. Only valid results count
+        toward wins and losses.
         """
         from sqlalchemy import case, func
 
@@ -1286,6 +1287,8 @@ class SideCompService:
         )
         wins_by_reg = {reg_id: int(wins or 0) for reg_id, wins, _ in score_rows}
         losses_by_reg = {reg_id: int(losses or 0) for reg_id, _, losses in score_rows}
+        # A valid loss also establishes participation, even when wins are zero.
+        scored_registration_ids = {reg_id for reg_id, _, _ in score_rows}
 
         player_ids = [r.player for r in regs]
         players_by_id = {p.id: p for p in Player.query.filter(Player.id.in_(player_ids)).all()} if player_ids else {}
@@ -1342,7 +1345,8 @@ class SideCompService:
             }
 
         def build_table(table_id: str, title: str, members: list, track_losses: bool) -> dict:
-            available_weapons = [p.name for p in Pompfen if any(reg.weapon == p.value for reg in members)]
+            selectable_members = [reg for reg in members if not application_view or reg.id in scored_registration_ids]
+            available_weapons = [p.name for p in Pompfen if any(reg.weapon == p.value for reg in selectable_members)]
             effective_sort = "win_percentage" if track_losses and sort_by != "wins" else "wins"
 
             def sort_key(reg: SideCompRegistration):
@@ -1355,36 +1359,23 @@ class SideCompService:
                 return (0, -wins / games, -wins, reg.entry_number)
 
             ranked = sorted(members, key=sort_key)
-            if not application_view and selected_weapon is not None:
-                ranked = [reg for reg in ranked if reg.weapon == selected_weapon.value]
-            ranked_entries = list(enumerate(ranked, start=1))
             top_n = sc.only_show_top_n_results
             personal_row = None
-            class_winners = []
             if top_n == 0:
                 visible = []
             else:
-                for rank, reg in ranked_entries:
+                for rank, reg in enumerate(ranked, start=1):
                     if reg.player == viewer_player_id:
                         personal_row = row_for(reg, rank, track_losses)
                         break
-                if application_view and sc.type == SideCompType.DUELING:
-                    leaders_by_weapon = {}
-                    for rank, reg in ranked_entries:
-                        leaders_by_weapon.setdefault(reg.weapon, (rank, reg))
-                    for pompfen in Pompfen:
-                        if selected_weapon is not None and selected_weapon != pompfen:
-                            continue
-                        leader = leaders_by_weapon.get(pompfen.value)
-                        if leader is not None:
-                            rank, reg = leader
-                            class_winners.append(row_for(reg, rank, track_losses))
-
-                visible = ranked_entries
+                visible = ranked
+                if selected_weapon is not None:
+                    visible = [reg for reg in visible if reg.weapon == selected_weapon.value]
+                    if application_view and selected_weapon.name not in available_weapons:
+                        visible = []
                 if not include_below_cut and top_n is not None:
-                    visible = visible[:top_n]
-                if application_view and selected_weapon is not None:
-                    visible = [(rank, reg) for rank, reg in visible if reg.weapon == selected_weapon.value]
+                    limit = 1 if application_view and selected_weapon is not None else top_n
+                    visible = visible[:limit]
             return {
                 "id": table_id,
                 "title": title,
@@ -1392,9 +1383,8 @@ class SideCompService:
                 "available_weapons": available_weapons,
                 "weapon": weapon,
                 "sort": effective_sort,
-                "rows": [row_for(reg, rank, track_losses) for rank, reg in visible],
+                "rows": [row_for(reg, rank, track_losses) for rank, reg in enumerate(visible, start=1)],
                 "personal_row": personal_row,
-                "class_winners": class_winners,
             }
 
         if sc.type == SideCompType.CHAIN_BREAKING:
