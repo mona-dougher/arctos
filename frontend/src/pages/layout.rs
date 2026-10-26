@@ -167,6 +167,8 @@ fn page_title_for_route(route: &Route) -> String {
 
 const BOOTSTRAP: Asset = asset!("/assets/vendor/bootstrap.min.css");
 const ICONS: Asset = asset!("/assets/vendor/fontawesome");
+const BRAND_MARK_LIGHT: Asset = asset!("/assets/arctos-light.png");
+const BRAND_MARK_DARK: Asset = asset!("/assets/arctos-dark.png");
 
 #[component]
 fn AccountAvatar(photo: Option<String>) -> Element {
@@ -251,6 +253,10 @@ pub fn Layout() -> Element {
         };
     }
 
+    let brand_mark = match color_scheme {
+        "dark" => BRAND_MARK_DARK,
+        _ => BRAND_MARK_LIGHT,
+    };
     rsx! {
         Title { "{page_title}" }
         link { rel: "stylesheet", href: BOOTSTRAP }
@@ -278,7 +284,7 @@ pub fn Layout() -> Element {
             header { class: "app-header",
                 div { class: "app-header-inner",
                     Link { to: Route::Index {}, class: "app-brand", aria_label: "Arctos events",
-                        span { class: "brand-mark", aria_hidden: "true", i { class: "fa-solid fa-trophy" } }
+                        img { class: "brand-mark", src: brand_mark, alt: "" }
                         span { "Arctos" }
                     }
                     nav { class: "app-nav", aria_label: "Main navigation",
