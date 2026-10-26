@@ -359,7 +359,10 @@ def league_detail(league_url):
 
     return jsonify(
         {
-            "league": league_to_dict(league),
+            "league": league_to_dict(
+                league,
+                include_registration_form_settings=PermissionService.is_league_organizer(league_url, current_user),
+            ),
             "events": events,
             "teams_with_counts": teams_with_counts,
             "unattached_players": unattached,

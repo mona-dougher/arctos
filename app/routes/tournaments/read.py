@@ -40,6 +40,7 @@ from app.services.match_start_eligibility import (
     why_sections_to_dict,
 )
 from app.services.permission_service import PermissionService
+from app.services.registration_form_service import RegistrationFormService
 from app.services.registration_resolver import (
     is_player_registered,
     is_team_registered,
@@ -214,6 +215,8 @@ def serialize_manage(scope, search_query: str, search_type: str, cfg) -> dict:
     else:
         tournament = Tournament.query.filter_by(url=scope.event_url).first()
         tournament_dict = tournament_to_dict(tournament)
+
+    tournament_dict.update(RegistrationFormService.public_config(cfg))
 
     player_rows = []
     for pr in players_with_registrations:
@@ -485,7 +488,12 @@ def tournament_detail(tournament_url):
 
     return jsonify(
         {
-            "tournament": tournament_to_dict(tournament),
+            "tournament": tournament_to_dict(
+                tournament,
+                include_registration_form_settings=PermissionService.is_tournament_organizer_of(
+                    tournament, current_user
+                ),
+            ),
             "teams_with_counts": teams_with_counts,
             "unattached_players": unattached,
             "to_entries": to_entries,

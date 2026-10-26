@@ -20,6 +20,7 @@ from models import (
     db,
 )
 from app.domain.enums import RegistrationStatus
+from app.error_values import Err
 from app.services._common import current_user_type, Scope
 from app.services.permission_service import PermissionService
 from app.services.registration_service import RegistrationService
@@ -125,7 +126,6 @@ def register_player_for_tournament(tournament_url: str):
                 else "Player registration successful! You are now registered for the tournament."
             )
         },
-        err_status_code=400,
     )
 
 
@@ -432,6 +432,10 @@ def accept_invitation(tournament_url: str, invitation_id: int):
         status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
 
+    requirement = RegistrationService.require_player_form(Scope.event(tournament_url), player_registration.player)
+    if isinstance(requirement, Err):
+        return json_from_result(requirement)
+
     player_registration.status = RegistrationStatus.CONFIRMED
     db.session.commit()
     return (
@@ -472,6 +476,10 @@ def decline_invitation(tournament_url: str, invitation_id: int):
         team=current_user.id,
         status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
+
+    requirement = RegistrationService.require_player_form(Scope.event(tournament_url), player_registration.player)
+    if isinstance(requirement, Err):
+        return json_from_result(requirement)
 
     player_registration.status = RegistrationStatus.CONFIRMED
     player_registration.team = None
@@ -655,7 +663,6 @@ def league_register_player(league_url):
     return json_from_result(
         res,
         ok_to_payload=lambda _: {"message": msg},
-        err_status_code=400,
     )
 
 
@@ -787,6 +794,14 @@ def update_my_player_registration_league(league_url):
     data = request.get_json()
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
+
+    confirms_registration = (
+        "team" in data and not data["team"] and reg.team is not None and reg.status != RegistrationStatus.CONFIRMED
+    )
+    if confirms_registration:
+        requirement = RegistrationService.require_player_form(Scope.league(league_url), reg.player)
+        if isinstance(requirement, Err):
+            return json_from_result(requirement)
 
     if "jersey_name" in data:
         reg.jersey_name = data["jersey_name"]
@@ -1084,6 +1099,10 @@ def league_accept_invitation(league_url, invitation_id):
         status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
 
+    requirement = RegistrationService.require_player_form(Scope.league(league_url), player_registration.player)
+    if isinstance(requirement, Err):
+        return json_from_result(requirement)
+
     player_registration.status = RegistrationStatus.CONFIRMED
     db.session.commit()
     return (
@@ -1112,6 +1131,10 @@ def league_decline_invitation(league_url, invitation_id):
         team=current_user.id,
         status=RegistrationStatus.PENDING_TEAM_APPROVAL,
     ).first_or_404()
+
+    requirement = RegistrationService.require_player_form(Scope.league(league_url), player_registration.player)
+    if isinstance(requirement, Err):
+        return json_from_result(requirement)
 
     player_registration.status = RegistrationStatus.CONFIRMED
     player_registration.team = None
@@ -1192,6 +1215,14 @@ def update_my_player_registration(tournament_url):
     data = request.get_json()
     if not data:
         return jsonify({"error": "Invalid JSON"}), 400
+
+    confirms_registration = (
+        "team" in data and not data["team"] and reg.team is not None and reg.status != RegistrationStatus.CONFIRMED
+    )
+    if confirms_registration:
+        requirement = RegistrationService.require_player_form(Scope.event(tournament_url), reg.player)
+        if isinstance(requirement, Err):
+            return json_from_result(requirement)
 
     if "jersey_name" in data:
         reg.jersey_name = data["jersey_name"]

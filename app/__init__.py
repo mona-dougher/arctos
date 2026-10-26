@@ -126,6 +126,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.config["GOOGLE_CLIENT_ID"] = os.environ.get("GOOGLE_CLIENT_ID", "")
     app.config["GOOGLE_CLIENT_SECRET"] = os.environ.get("GOOGLE_CLIENT_SECRET", "")
     app.config["GOOGLE_REDIRECT_URI"] = os.environ.get("GOOGLE_REDIRECT_URI", "")
+    app.config["GOOGLE_FORMS_SERVICE_ACCOUNT_FILE"] = os.environ.get("GOOGLE_FORMS_SERVICE_ACCOUNT_FILE", "")
 
     # Handle subpath deployment
     if "SCRIPT_NAME" in os.environ:

@@ -1,6 +1,6 @@
 # Data Accessibility Guide
 
-Updated: Oct 24, 2026
+Updated: Oct 26, 2026
 
 This document details when and how data that you explicitly enter is
 accessible to others.
@@ -15,6 +15,14 @@ The team owner can add, change or remove this address in Edit profile.
 Creating a new team with Google does not automatically publish the Google
 email address. Existing team contact addresses remain visible until the
 owner changes or removes them.
+
+## Registration forms
+
+An event or league's form requirement and responder link are public. The
+response spreadsheet link, tab, and username heading are visible only to its
+authorized organizers. Arctos checks the configured username column and
+returns registration eligibility without publishing spreadsheet rows.
+The organizer controls access to the form responses in Google Sheets.
 
 ## Injuries
  

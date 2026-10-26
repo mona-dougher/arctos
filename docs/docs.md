@@ -439,6 +439,35 @@ Open **Organizer tools → Settings** to edit event information and registration
     it to work.
   - Roster and on-field player limits are enforced during registration and match setup.
 
+### Player registration forms
+
+Organizers can require a Google Form response before a player registers. League
+events use the requirement in league settings.
+
+1. Add a required question to the form for the player's exact Arctos username.
+2. Link the form to a response spreadsheet. Share the spreadsheet as **Viewer**
+   with the account shown in Arctos settings; keep general access **Restricted**.
+3. In **Settings → Registration form**, enable the requirement and enter the
+   form's responder link, the response tab's spreadsheet link, and the username
+   column heading from the first row.
+4. Save settings. Arctos verifies access to the tab and its username heading.
+
+Players open the form from the registration page, submit it using their Arctos
+username, and return to register. Capitalization must match; a leading `@` and
+surrounding whitespace are optional. Recent responses can take a few seconds to
+appear. If verification is unavailable, players can retry with their registration
+entries preserved.
+
+The requirement applies to player registration, organizer registration, and
+confirmation of pending registrations. Existing confirmed registrations remain
+valid. The response spreadsheet link is visible only to organizers. Arctos reads
+the username column to check completion; the organizer controls the form and its
+response data. A match confirms that the response sheet contains the player's
+username; it does not establish who submitted it.
+
+Site administrators configure access as described in
+[environment variables](env-vars.md#registration-forms).
+
 ### Head Ref Options
 
 As it says on the form:

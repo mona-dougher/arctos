@@ -1,5 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RegistrationFormConfig {
+    #[serde(default)]
+    pub registration_form_required: bool,
+    pub registration_form_url: Option<String>,
+    pub registration_form_sheet_url: Option<String>,
+    pub registration_form_username_column: Option<String>,
+    pub registration_form_service_account_email: Option<String>,
+    #[serde(default)]
+    pub registration_form_available: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
@@ -15,6 +27,8 @@ pub struct User {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Tournament {
+    #[serde(flatten)]
+    pub registration_form: RegistrationFormConfig,
     pub url: String,
     pub name: String,
     #[serde(default)]
@@ -120,6 +134,8 @@ pub struct UnattachedPlayer {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LeagueInfo {
+    #[serde(flatten)]
+    pub registration_form: RegistrationFormConfig,
     pub league_url: String,
     pub name: String,
     #[serde(default)]
