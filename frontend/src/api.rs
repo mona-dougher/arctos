@@ -3621,12 +3621,30 @@ pub async fn sidecomp_finalize(comp_id: i32) -> Result<Value, String> {
     response_json(r).await
 }
 
-pub async fn sidecomp_standings(comp_id: i32) -> Result<SideCompStandings, String> {
+pub async fn sidecomp_standings(
+    comp_id: i32,
+    table: Option<&str>,
+    weapon: Option<&str>,
+    sort: Option<&str>,
+) -> Result<SideCompStandings, String> {
+    let mut selection = Vec::new();
+    if let Some(table) = table {
+        selection.push(("table", table));
+    }
+    if let Some(weapon) = weapon {
+        selection.push(("weapon", weapon));
+    }
+    if let Some(sort) = sort {
+        selection.push(("sort", sort));
+    }
     let c = client();
-    let r = with_credentials(c.get(format!("{}/_api/sidecomps/{}/standings", base(), comp_id)))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let r = with_credentials(
+        c.get(format!("{}/_api/sidecomps/{}/standings", base(), comp_id))
+            .query(&selection),
+    )
+    .send()
+    .await
+    .map_err(|e| e.to_string())?;
     response_json(r).await
 }
 

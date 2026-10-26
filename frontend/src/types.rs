@@ -1942,6 +1942,11 @@ pub struct SideCompStandingTable {
     pub title: String,
     #[serde(default)]
     pub track_losses: bool,
+    #[serde(default)]
+    pub available_weapons: Vec<String>,
+    pub weapon: Option<String>,
+    #[serde(default)]
+    pub sort: String,
     pub rows: Vec<SideCompStandingRow>,
 }
 
@@ -1954,6 +1959,8 @@ pub struct SideCompStandings {
     #[serde(default)]
     pub finalized: bool,
     pub only_show_top_n_results: Option<i32>,
+    #[serde(default)]
+    pub showing_all_results: bool,
     #[serde(default)]
     pub results_page_enabled: bool,
     pub tables: Vec<SideCompStandingTable>,

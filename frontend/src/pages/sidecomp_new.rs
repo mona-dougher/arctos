@@ -116,15 +116,19 @@ pub fn SideCompNew(url: String) -> Element {
                         div { class: "settings-advanced-body",
                     AllowedWeaponsCheckboxes { selected: allowed_weapons }
                     div { class: "mb-3",
-                        label { class: "form-label", r#for: "sidecomp-top-n", "Only show top N results" }
+                        label { class: "form-label", r#for: "sidecomp-top-n", "Public result limit" }
                         input {
                             id: "sidecomp-top-n",
+                            aria_describedby: "sidecomp-top-n-help",
                             class: "form-control",
                             r#type: "number",
                             min: "0",
                             placeholder: "Leave blank to show all",
                             value: "{top_n_text}",
                             oninput: move |evt| top_n_text.set(evt.value()),
+                        }
+                        div { id: "sidecomp-top-n-help", class: "form-text",
+                            "Leave blank to publish all results, or enter 0 to hide them. A positive number limits each table after weapon filtering and sorting. When results are enabled, organizers can view the full list."
                         }
                     }
                         }

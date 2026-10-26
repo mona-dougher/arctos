@@ -1217,14 +1217,21 @@ class SideCompService:
         )
 
     @staticmethod
-    def standings(comp_id: int, *, include_below_cut: bool = False) -> Result[dict, ArctosError]:
+    def standings(
+        comp_id: int,
+        *,
+        include_below_cut: bool = False,
+        table_id: str | None = None,
+        weapon: str | None = None,
+        sort_by: str | None = None,
+    ) -> Result[dict, ArctosError]:
         """Compute standings tables for *comp_id*.
 
-        Rankings are computed per table over all valid points, then an optional
-        top-N cut is applied. ``include_below_cut`` keeps every ranked player
-        for an organizer viewing the in-app results page. Weapon filtering is
-        left to the client so ranks remain global within each table.
-        Incomplete registrations are excluded.
+        Each table filters by weapon and ranks matching complete registrations
+        before applying the public visibility limit. Weapon choices describe
+        every complete registration in that table. ``include_below_cut`` keeps
+        every matching player for an organizer viewing the in-app results page.
+        Only valid results count toward wins and losses.
         """
         from sqlalchemy import case, func
 
@@ -1238,6 +1245,15 @@ class SideCompService:
         sc = SideComp.query.get(comp_id)
         if sc is None:
             return Err(NotFoundError("Side competition not found"))
+
+        table_ids = ("chains", "breaks") if sc.type == SideCompType.CHAIN_BREAKING else ("all",)
+        if table_id is not None and table_id not in table_ids:
+            return Err(ValidationError("Invalid standings table"))
+        selected_weapon = Pompfen.from_name(weapon)
+        if weapon is not None and selected_weapon is None:
+            return Err(ValidationError("Invalid standings weapon"))
+        if sort_by is not None and sort_by not in ("wins", "win_percentage"):
+            return Err(ValidationError("Invalid standings sort"))
 
         tournament = Tournament.query.get(sc.event)
         regs = SideCompRegistration.query.filter(
@@ -1316,21 +1332,34 @@ class SideCompService:
             }
 
         def build_table(table_id: str, title: str, members: list, track_losses: bool) -> dict:
+            available_weapons = [p.name for p in Pompfen if any(reg.weapon == p.value for reg in members)]
+            selected_members = members
+            if selected_weapon is not None:
+                selected_members = [reg for reg in members if reg.weapon == selected_weapon.value]
+            effective_sort = "win_percentage" if track_losses and sort_by != "wins" else "wins"
+
             def sort_key(reg: SideCompRegistration):
                 wins = wins_by_reg.get(reg.id, 0)
-                if not track_losses:
+                if effective_sort == "wins":
                     return (-wins, reg.entry_number)
                 games = wins + losses_by_reg.get(reg.id, 0)
                 if games == 0:
                     return (1, 0.0, 0, reg.entry_number)
                 return (0, -wins / games, -wins, reg.entry_number)
 
-            ranked = sorted(members, key=sort_key)
-            ranked_rows = [row_for(reg, idx, track_losses) for idx, reg in enumerate(ranked, start=1)]
+            ranked = sorted(selected_members, key=sort_key)
             top_n = sc.only_show_top_n_results
-            if not include_below_cut and top_n is not None and top_n > 0:
-                ranked_rows = ranked_rows[:top_n]
-            return {"id": table_id, "title": title, "track_losses": track_losses, "rows": ranked_rows}
+            if not include_below_cut and top_n is not None:
+                ranked = ranked[:top_n]
+            return {
+                "id": table_id,
+                "title": title,
+                "track_losses": track_losses,
+                "available_weapons": available_weapons,
+                "weapon": weapon,
+                "sort": effective_sort,
+                "rows": [row_for(reg, idx, track_losses) for idx, reg in enumerate(ranked, start=1)],
+            }
 
         if sc.type == SideCompType.CHAIN_BREAKING:
             chains = [r for r in regs if r.weapon == Pompfen.CHAIN.value]
@@ -1341,6 +1370,8 @@ class SideCompService:
             ]
         else:
             tables = [build_table("all", "Standings", regs, bool(sc.track_losses))]
+        if table_id is not None:
+            tables = [table for table in tables if table["id"] == table_id]
 
         return Ok(
             {
@@ -1349,6 +1380,7 @@ class SideCompService:
                 "type": str(sc.type),
                 "finalized": bool(sc.finalized),
                 "only_show_top_n_results": sc.only_show_top_n_results,
+                "showing_all_results": include_below_cut or sc.only_show_top_n_results is None,
                 "results_page_enabled": sc.results_page_enabled(),
                 "tables": tables,
             }

@@ -59,7 +59,7 @@ pub use organizer_tools::OrganizerTools;
 pub use results_games_table::{ResultsGamesTable, rows_for_team};
 pub use results_sort_header::ResultsSortHeader;
 pub use sidecomp_weapon_modal::{
-    default_allowed_weapons, AllowedWeaponsCheckboxes, PompfenIcon, SideCompRegistrationMode,
+    default_allowed_weapons, pompfen_by_id, AllowedWeaponsCheckboxes, PompfenIcon, SideCompRegistrationMode,
     SideCompWeaponModal, ALL_POMPFEN,
 };
 pub use team_label::{TeamLabel, TeamLabelStyle, TeamSlot};

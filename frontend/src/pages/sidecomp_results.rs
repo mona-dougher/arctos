@@ -1,61 +1,64 @@
-use crate::Route;
 use crate::api;
-use crate::components::{ALL_POMPFEN, PompfenIcon};
-use crate::types::{SideCompStandingRow, SideCompStandingTable};
+use crate::components::{pompfen_by_id, PompfenIcon};
+use crate::types::{SideCompStandingTable, SideCompStandings};
+use crate::Route;
 use dioxus::prelude::*;
 #[cfg(target_arch = "wasm32")]
-use gloo_timers::callback::Interval;
-use std::cmp::Ordering;
+use gloo_timers::future::TimeoutFuture;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StandingSort {
     Wins,
     WinRatio,
 }
 
-fn ordered_standings(rows: &[SideCompStandingRow], sort: StandingSort) -> Vec<SideCompStandingRow> {
-    let mut ordered = rows.to_vec();
-    ordered.sort_by(|left, right| match sort {
-        StandingSort::Wins => wins_order(left, right),
-        StandingSort::WinRatio => win_ratio_order(left, right),
-    });
-    for (index, row) in ordered.iter_mut().enumerate() {
-        row.rank = (index as i32) + 1;
-    }
-    ordered
-}
-
-fn wins_order(left: &SideCompStandingRow, right: &SideCompStandingRow) -> Ordering {
-    right
-        .wins
-        .cmp(&left.wins)
-        .then_with(|| left.entry_number.cmp(&right.entry_number))
-        .then_with(|| left.registration_id.cmp(&right.registration_id))
-}
-
-fn win_ratio_order(left: &SideCompStandingRow, right: &SideCompStandingRow) -> Ordering {
-    let left_games = left.wins + left.losses.unwrap_or(0);
-    let right_games = right.wins + right.losses.unwrap_or(0);
-    match (left_games <= 0, right_games <= 0) {
-        (true, false) => return Ordering::Greater,
-        (false, true) => return Ordering::Less,
-        (false, false) => {
-            let left_ratio = left.wins as f64 / left_games as f64;
-            let right_ratio = right.wins as f64 / right_games as f64;
-            match right_ratio.partial_cmp(&left_ratio).unwrap_or(Ordering::Equal) {
-                Ordering::Equal => {}
-                order => return order,
-            }
-            match right.wins.cmp(&left.wins) {
-                Ordering::Equal => {}
-                order => return order,
-            }
+impl StandingSort {
+    fn default_for(track_losses: bool) -> Self {
+        if track_losses {
+            Self::WinRatio
+        } else {
+            Self::Wins
         }
-        (true, true) => {}
     }
-    left.entry_number
-        .cmp(&right.entry_number)
-        .then_with(|| left.registration_id.cmp(&right.registration_id))
+    fn query_value(self) -> &'static str {
+        match self {
+            Self::Wins => "wins",
+            Self::WinRatio => "win_percentage",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StandingSelection {
+    weapon: Option<String>,
+    sort: StandingSort,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PublicationPolicy {
+    showing_all_results: bool,
+    public_limit: Option<i32>,
+}
+
+impl PublicationPolicy {
+    fn from_standings(standings: &SideCompStandings) -> Self {
+        Self {
+            showing_all_results: standings.showing_all_results,
+            public_limit: standings.only_show_top_n_results,
+        }
+    }
+}
+
+impl StandingSelection {
+    fn is_default(&self, track_losses: bool) -> bool {
+        self.weapon.is_none() && self.sort == StandingSort::default_for(track_losses)
+    }
+    fn for_loss_tracking(mut self, track_losses: bool) -> Self {
+        if !track_losses {
+            self.sort = StandingSort::Wins;
+        }
+        self
+    }
 }
 
 #[component]
@@ -67,11 +70,7 @@ fn StandingSortHeader(label: &'static str, active: bool, onsort: EventHandler<()
             aria_sort: if active { "descending" } else { "none" },
             button {
                 r#type: "button",
-                class: if active {
-                    "btn btn-link p-0 align-baseline text-decoration-none fw-bold"
-                } else {
-                    "btn btn-link p-0 align-baseline text-decoration-none fw-normal"
-                },
+                class: if active { "btn btn-link p-0 align-baseline text-decoration-none fw-bold" } else { "btn btn-link p-0 align-baseline text-decoration-none fw-normal" },
                 style: "color: inherit;",
                 onclick: move |_| onsort.call(()),
                 "{label}"
@@ -113,143 +112,230 @@ fn StandingAvatar(photo: Option<String>, is_team: bool) -> Element {
 }
 
 #[component]
-fn StandingsTableView(table: SideCompStandingTable) -> Element {
-    let mut weapon_filter = use_signal(|| None::<String>);
+fn StandingsTableView(
+    comp_id: i32,
+    table: SideCompStandingTable,
+    publication_policy: PublicationPolicy,
+) -> Element {
     let track_losses = table.track_losses;
-    let mut sort_by = use_signal(move || {
-        if track_losses {
-            StandingSort::WinRatio
-        } else {
-            StandingSort::Wins
-        }
+    let mut selection = use_signal(move || StandingSelection {
+        weapon: None,
+        sort: StandingSort::default_for(track_losses),
     });
-    let rows = table.rows.clone();
-    let sort = if track_losses && sort_by() == StandingSort::WinRatio {
-        StandingSort::WinRatio
-    } else {
-        StandingSort::Wins
-    };
-    let ordered = ordered_standings(&rows, sort);
-    let filtered: Vec<SideCompStandingRow> = match weapon_filter() {
-        None => ordered,
-        Some(w) => ordered
-            .into_iter()
-            .filter(|r| r.weapon.as_deref() == Some(w.as_str()))
-            .collect(),
-    };
-    let weapons_in_table: Vec<String> = {
-        let mut seen = Vec::new();
-        for r in rows.iter() {
-            if let Some(w) = r.weapon.as_ref() {
-                if !seen.iter().any(|s: &String| s == w) {
-                    seen.push(w.clone());
+    let current_selection = selection().for_loss_tracking(track_losses);
+    let sort = current_selection.sort;
+    let mut selected_standings = use_resource(use_reactive(
+        &(comp_id, table.id.clone(), track_losses, publication_policy),
+        move |(comp_id, table_id, track_losses, publication_policy)| {
+            let selected = selection().for_loss_tracking(track_losses);
+            async move {
+                // The page refresh already supplies the default table.
+                if selected.is_default(track_losses) {
+                    return (selected, publication_policy, Ok(None));
                 }
+                let result = api::sidecomp_standings(
+                    comp_id,
+                    Some(&table_id),
+                    selected.weapon.as_deref(),
+                    Some(selected.sort.query_value()),
+                )
+                .await;
+                let response_policy = result
+                    .as_ref()
+                    .map(PublicationPolicy::from_standings)
+                    .unwrap_or(publication_policy);
+                let result = result.and_then(|data| {
+                    if !data.results_page_enabled {
+                        return Err(
+                            "Results are not being shown for this side competition.".to_string()
+                        );
+                    }
+                    data.tables
+                        .into_iter()
+                        .find(|table| table.id == table_id)
+                        .map(Some)
+                        .ok_or_else(|| "The standings table is unavailable.".to_string())
+                });
+                (selected, response_policy, result)
+            }
+        },
+    ));
+    use_future(move || async move {
+        #[cfg(target_arch = "wasm32")]
+        loop {
+            TimeoutFuture::new(1000).await;
+            if selected_standings.finished() {
+                selected_standings.restart();
             }
         }
-        // Keep stable pompfen order
-        seen.sort_by_key(|w| {
-            ALL_POMPFEN
-                .iter()
-                .position(|p| p.id == w)
-                .unwrap_or(usize::MAX)
-        });
-        seen
+    });
+    // A changed selection or publication policy invalidates the previous rows.
+    let displayed_table = if current_selection.is_default(track_losses) {
+        Some(Ok(table.clone()))
+    } else {
+        match selected_standings.read().as_ref() {
+            Some((loaded_selection, response_policy, result))
+                if loaded_selection == &current_selection
+                    && response_policy == &publication_policy =>
+            {
+                result.clone().transpose()
+            }
+            _ => None,
+        }
     };
-
+    let rows = match &displayed_table {
+        Some(Ok(loaded)) => loaded.rows.clone(),
+        _ => Vec::new(),
+    };
+    let weapon_name = current_selection.weapon.as_ref().map(|id| {
+        pompfen_by_id(id)
+            .map_or(id.as_str(), |option| option.label)
+            .to_string()
+    });
     rsx! {
-        div { class: "mb-4",
+        section { class: "mb-4", aria_label: "{table.title}",
             div { class: "d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2",
                 h3 { class: "h4 mb-0", "{table.title}" }
-                div { class: "d-flex flex-wrap gap-1",
+                div {
+                    class: "d-flex flex-wrap gap-1",
+                    role: "group",
+                    aria_label: "{table.title} weapon filter",
                     button {
-                        class: if weapon_filter().is_none() { "btn btn-sm btn-primary" } else { "btn btn-sm btn-outline-secondary" },
-                        onclick: move |_| weapon_filter.set(None),
+                        r#type: "button",
+                        class: if current_selection.weapon.is_none() { "btn btn-sm btn-primary" } else { "btn btn-sm btn-outline-secondary" },
+                        aria_pressed: current_selection.weapon.is_none(),
+                        onclick: move |_| { selection.write().weapon = None; },
                         "All"
                     }
-                    for w in weapons_in_table.iter() {
+                    for w in table.available_weapons.iter() {
                         {
                             let wid = w.clone();
                             let wid_btn = w.clone();
-                            let active = weapon_filter().as_deref() == Some(wid.as_str());
+                            let active = current_selection.weapon.as_deref() == Some(wid.as_str());
+                            let label = pompfen_by_id(&wid)
+                                .map_or(wid.as_str(), |option| option.label)
+                                .to_string();
                             rsx! {
                                 button {
+                                    r#type: "button",
                                     class: if active { "btn btn-sm btn-primary d-inline-flex align-items-center gap-1" } else { "btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1" },
-                                    onclick: move |_| weapon_filter.set(Some(wid_btn.clone())),
-                                    PompfenIcon { weapon: wid.clone(), size: "1.1em".to_string() }
-                                    "{wid}"
+                                    aria_pressed: active,
+                                    onclick: move |_| { selection.write().weapon = Some(wid_btn.clone()); },
+                                    span { aria_hidden: "true",
+                                        PompfenIcon { weapon: wid.clone(), size: "1.1em".to_string() }
+                                    }
+                                    "{label}"
                                 }
                             }
                         }
                     }
                 }
             }
-            if filtered.is_empty() {
-                p { class: "text-muted", "No players to show." }
-            } else {
-                div { class: "table-responsive", role: "region", "aria-label": "{table.title} standings", tabindex: "0",
-                    table { class: "table table-striped align-middle sidecomp-standings-table",
-                        thead {
-                            tr {
-                                th { scope: "col", class: "table-number", "Rank" }
-                                th { scope: "col", class: "table-number", "#" }
-                                th { scope: "col", class: "table-nowrap", "Player" }
-                                th { scope: "col", class: "table-nowrap", "Role" }
+            p { class: "small text-muted mb-2",
+                if let Some(weapon) = weapon_name {
+                    "{weapon} · "
+                } else {
+                    "All weapons · "
+                }
+                if sort == StandingSort::WinRatio {
+                    "Ranked by win percentage"
+                } else {
+                    "Ranked by wins"
+                }
+            }
+            if displayed_table.is_none() {
+                p { role: "status", class: "text-muted", "Loading standings…" }
+            }
+            if let Some(Err(error)) = &displayed_table {
+                div { role: "alert", class: "alert alert-danger",
+                    p { class: "mb-2", "Could not load standings: {error}" }
+                    button {
+                        r#type: "button",
+                        class: "btn btn-outline-secondary",
+                        onclick: move |_| selected_standings.restart(),
+                        "Retry standings"
+                    }
+                }
+            }
+            if matches!(&displayed_table, Some(Ok(_))) && rows.is_empty() {
+                p { class: "text-muted", "No players match this weapon." }
+            }
+            div {
+                class: "table-responsive",
+                role: "region",
+                "aria-label": "{table.title} standings",
+                tabindex: "0",
+                table { class: "table table-striped align-middle sidecomp-standings-table",
+                    thead {
+                        tr {
+                            th { scope: "col", class: "table-number", "Rank" }
+                            th { scope: "col", class: "table-number", "#" }
+                            th { scope: "col", class: "table-nowrap", "Player" }
+                            th { scope: "col", class: "table-nowrap", "Role" }
+                            StandingSortHeader {
+                                label: "Wins",
+                                active: sort == StandingSort::Wins,
+                                onsort: move |_| { selection.write().sort = StandingSort::Wins; },
+                            }
+                            if table.track_losses {
+                                th { scope: "col", class: "table-number", "Losses" }
                                 StandingSortHeader {
-                                    label: "Wins",
-                                    active: sort == StandingSort::Wins,
-                                    onsort: move |_| sort_by.set(StandingSort::Wins),
-                                }
-                                if table.track_losses {
-                                    th { scope: "col", class: "table-number", "Losses" }
-                                    StandingSortHeader {
-                                        label: "Win %",
-                                        active: sort == StandingSort::WinRatio,
-                                        onsort: move |_| sort_by.set(StandingSort::WinRatio),
-                                    }
+                                    label: "Win %",
+                                    active: sort == StandingSort::WinRatio,
+                                    onsort: move |_| { selection.write().sort = StandingSort::WinRatio; },
                                 }
                             }
                         }
-                        tbody {
-                            for row in filtered.iter() {
-                                tr { key: "{row.registration_id}",
-                                    td { class: "table-number", "{row.rank}" }
-                                    td { class: "table-number", "{row.entry_number}" }
-                                    td { class: "table-copy",
-                                        div { class: "d-flex align-items-center",
-                                            StandingAvatar { photo: row.profile_photo.clone(), is_team: false }
-                                            div {
-                                                div { class: "fw-semibold", "{row.display_name}" }
-                                                div { class: "small text-muted d-flex align-items-center",
-                                                    StandingAvatar { photo: row.team_profile_photo.clone(), is_team: true }
-                                                    span {
-                                                        {
-                                                            let pseudo = row.jersey_name.clone().unwrap_or_else(|| "—".to_string());
-                                                            let num = row.jersey_number.clone().unwrap_or_default();
-                                                            let short = row.team_shortname.clone().unwrap_or_else(|| "merc".to_string());
-                                                            if num.is_empty() {
-                                                                format!("{pseudo} · {short}")
-                                                            } else {
-                                                                format!("{pseudo} ({num}) · {short}")
-                                                            }
+                    }
+                    tbody {
+                        for row in rows.iter() {
+                            tr { key: "{row.registration_id}",
+                                td { class: "table-number", "{row.rank}" }
+                                td { class: "table-number", "{row.entry_number}" }
+                                td { class: "table-copy",
+                                    div { class: "d-flex align-items-center",
+                                        StandingAvatar {
+                                            photo: row.profile_photo.clone(),
+                                            is_team: false,
+                                        }
+                                        div {
+                                            div { class: "fw-semibold", "{row.display_name}" }
+                                            div { class: "small text-muted d-flex align-items-center",
+                                                StandingAvatar {
+                                                    photo: row.team_profile_photo.clone(),
+                                                    is_team: true,
+                                                }
+                                                span {
+                                                    {
+                                                        let pseudo = row.jersey_name.clone().unwrap_or_else(|| "—".to_string());
+                                                        let num = row.jersey_number.clone().unwrap_or_default();
+                                                        let short = row.team_shortname.clone().unwrap_or_else(|| "merc".to_string());
+                                                        if num.is_empty() {
+                                                            format!("{pseudo} · {short}")
+                                                        } else {
+                                                            format!("{pseudo} ({num}) · {short}")
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    td { class: "table-nowrap",
-                                        if let Some(w) = row.weapon.as_ref() {
-                                            PompfenIcon { weapon: w.clone(), size: "1.5em".to_string() }
+                                }
+                                td { class: "table-nowrap",
+                                    if let Some(w) = row.weapon.as_ref() {
+                                        PompfenIcon {
+                                            weapon: w.clone(),
+                                            size: "1.5em".to_string(),
                                         }
                                     }
-                                    td { class: "table-number fw-bold", "{row.wins}" }
-                                    if table.track_losses {
-                                        td { class: "table-number", "{row.losses.unwrap_or(0)}" }
-                                        td { class: "table-number fw-bold",
-                                            match row.win_percentage {
-                                                Some(percentage) => format!("{percentage:.0}%"),
-                                                None => "—".to_string(),
-                                            }
+                                }
+                                td { class: "table-number fw-bold", "{row.wins}" }
+                                if table.track_losses {
+                                    td { class: "table-number", "{row.losses.unwrap_or(0)}" }
+                                    td { class: "table-number fw-bold",
+                                        match row.win_percentage {
+                                            Some(percentage) => format!("{percentage:.0}%"),
+                                            None => "—".to_string(),
                                         }
                                     }
                                 }
@@ -264,46 +350,56 @@ fn StandingsTableView(table: SideCompStandingTable) -> Element {
 
 #[component]
 pub fn SideCompResults(url: String, comp_id: i32) -> Element {
-    let mut tick = use_signal(|| 0u32);
-    let mut poll_started = use_signal(|| false);
-    let standings = use_resource(move || {
-        let _ = tick();
-        async move { api::sidecomp_standings(comp_id).await }
-    });
-
+    let mut standings = use_resource(use_reactive(&comp_id, move |comp_id| async move {
+        api::sidecomp_standings(comp_id, None, None, None).await
+    }));
+    let mut last_standings = use_signal(|| None::<SideCompStandings>);
     use_effect(move || {
-        #[cfg(target_arch = "wasm32")]
-        if !poll_started() {
-            let mut tick = tick;
-            let handle = Interval::new(1000, move || {
-                tick.set(tick().wrapping_add(1));
-            });
-            poll_started.set(true);
-            std::mem::forget(handle);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let _ = (&tick, &poll_started);
+        if let Some(Ok(data)) = standings.read().as_ref() {
+            last_standings.set(Some(data.clone()));
         }
     });
-
+    use_future(move || async move {
+        #[cfg(target_arch = "wasm32")]
+        loop {
+            TimeoutFuture::new(1000).await;
+            if standings.finished() {
+                standings.restart();
+            }
+        }
+    });
     let url_back = url.clone();
-
+    let displayed_standings = last_standings().filter(|data| data.id == comp_id);
     rsx! {
         div { class: "row",
             div { class: "col-12",
                 Link {
-                    to: Route::SideCompDetail { url: url_back, comp_id },
+                    to: Route::SideCompDetail {
+                        url: url_back,
+                        comp_id,
+                    },
                     class: "btn btn-link",
                     "<- Back to side competition"
                 }
-                match standings.read().as_ref() {
-                    Some(Ok(data)) => {
+                if let Some(Err(error)) = standings.read().as_ref() {
+                    div { class: "alert alert-danger", role: "alert",
+                        p { class: "mb-2", "Could not refresh results: {error}" }
+                        button {
+                            r#type: "button",
+                            class: "btn btn-outline-secondary",
+                            onclick: move |_| standings.restart(),
+                            "Retry results"
+                        }
+                    }
+                }
+                match displayed_standings {
+                    Some(data) => {
                         if !data.results_page_enabled {
                             rsx! {
                                 div { class: "alert alert-secondary", "Results are not being shown for this side competition." }
                             }
                         } else {
+                            let publication_policy = PublicationPolicy::from_standings(&data);
                             let tables = data.tables.clone();
                             let name = data.name.clone();
                             let title = if data.finalized {
@@ -313,78 +409,35 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
                             };
                             rsx! {
                                 h2 { "{title}" }
+                                p { class: "text-muted",
+                                    if data.showing_all_results {
+                                        if data.only_show_top_n_results.is_some() {
+                                            "You can view all results as an organizer. Public results are limited to the top {data.only_show_top_n_results.unwrap_or(0)} for each weapon and ranking."
+                                        } else {
+                                            "All results are public. Filter by weapon or choose a ranking column."
+                                        }
+                                    } else if let Some(limit) = data.only_show_top_n_results {
+                                        "The organizer publishes the top {limit} results for each weapon and ranking. Choose a weapon to see its leaders."
+                                    }
+                                }
                                 for table in tables.into_iter() {
-                                    StandingsTableView { key: "{table.id}", table }
+                                    StandingsTableView {
+                                        key: "{table.id}",
+                                        comp_id,
+                                        table,
+                                        publication_policy,
+                                    }
                                 }
                             }
                         }
                     }
-                    Some(Err(e)) => rsx! { div { class: "alert alert-danger", "{e}" } },
-                    None => rsx! { div { class: "spinner-border" } },
+                    None => rsx! {
+                        if !matches!(standings.read().as_ref(), Some(Err(_))) {
+                            p { role: "status", "Loading results…" }
+                        }
+                    },
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ordered_standings, StandingSort};
-    use crate::types::SideCompStandingRow;
-
-    fn row(registration_id: i32, entry_number: i32, wins: i32, losses: Option<i32>) -> SideCompStandingRow {
-        SideCompStandingRow {
-            registration_id,
-            entry_number,
-            weapon: None,
-            player_id: format!("p{registration_id}"),
-            display_name: format!("Player {registration_id}"),
-            profile_photo: None,
-            jersey_name: None,
-            jersey_number: None,
-            team_shortname: None,
-            team_profile_photo: None,
-            wins,
-            losses,
-            win_percentage: None,
-            rank: 0,
-        }
-    }
-
-    #[test]
-    fn win_ratio_sort_puts_unplayed_last_and_breaks_ties_by_wins() {
-        let rows = vec![
-            row(2, 2, 6, Some(2)),
-            row(4, 4, 0, Some(0)),
-            row(1, 1, 1, Some(0)),
-            row(3, 3, 3, Some(1)),
-        ];
-        let ordered = ordered_standings(&rows, StandingSort::WinRatio);
-        assert_eq!(
-            ordered.iter().map(|standing| standing.registration_id).collect::<Vec<_>>(),
-            vec![1, 2, 3, 4]
-        );
-        assert_eq!(ordered.iter().map(|standing| standing.rank).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn wins_sort_is_descending_and_does_not_reverse() {
-        let rows = vec![
-            row(1, 10, 1, Some(0)),
-            row(2, 2, 6, Some(2)),
-            row(3, 3, 3, Some(1)),
-            row(5, 4, 3, Some(0)),
-            row(4, 8, 0, Some(0)),
-        ];
-        let ordered = ordered_standings(&rows, StandingSort::Wins);
-        assert_eq!(
-            ordered.iter().map(|standing| standing.registration_id).collect::<Vec<_>>(),
-            vec![2, 3, 5, 1, 4]
-        );
-        let again = ordered_standings(&ordered, StandingSort::Wins);
-        assert_eq!(
-            again.iter().map(|standing| standing.registration_id).collect::<Vec<_>>(),
-            vec![2, 3, 5, 1, 4]
-        );
     }
 }

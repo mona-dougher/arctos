@@ -552,7 +552,11 @@ def finalize(comp_id: int):
 
 @bp.route("/sidecomps/<int:comp_id>/standings", methods=["GET"])
 def standings(comp_id: int):
-    """Standings tables. Organizers see every ranked player; everyone else gets the top-N cut."""
+    """Filter and rank standings before applying the public visibility limit.
+
+    Optional query parameters select a ``table``, ``weapon``, and ``sort``.
+    Organizers see every matching player.
+    """
     from models import SideComp
 
     include_below_cut = False
@@ -560,5 +564,11 @@ def standings(comp_id: int):
         sc = SideComp.query.get(comp_id)
         if sc is not None and PermissionService.is_tournament_organizer(sc.event, current_user):
             include_below_cut = True
-    res = SideCompService.standings(comp_id, include_below_cut=include_below_cut)
+    res = SideCompService.standings(
+        comp_id,
+        include_below_cut=include_below_cut,
+        table_id=request.args.get("table"),
+        weapon=request.args.get("weapon"),
+        sort_by=request.args.get("sort"),
+    )
     return json_from_result(res, ok_to_payload=lambda payload: payload)

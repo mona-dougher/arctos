@@ -658,6 +658,17 @@ and how many standings are public. Logged-in users can record results while a
 competition is active and not finalized. Results record their submitter;
 organizers review validity and resolve flags before finalizing.
 
+The public result limit applies after filtering by weapon and sorting. Leaving
+the limit blank publishes all standings; zero hides results; a positive number
+publishes that many leaders in each selected view. Organizers can view every
+matching player. Finalizing results preserves the publication limit.
+
+Chain/breaking has separate Chains and Breaks tables. Each table has its own
+weapon filter and ranking controls. Weapon choices include all complete entries
+in the table, including players below the public limit. Rankings use wins, or win
+percentage when losses are tracked. Players with no results follow played
+entries in the win-percentage ranking.
+
 ### Running a Side Comp
 
 Open **Enter results**, enter the player's entry number, and record the result.

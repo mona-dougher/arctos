@@ -127,6 +127,7 @@ screenshot options; use `--help` for its supported filters.
 | `check_event_ui.py` | Event navigation, rosters, registration destinations, and schedule access |
 | `check_registration_ui.py` | Contextual registration actions for guest/player/team accounts |
 | `check_results_ui.py` | Populated and empty results, statistics, keyboard sorting, ribbon inclusion, and match expansion |
+| `check_sidecomp_results_ui.py` | Weapon standings, ranking, publication limits, delayed requests, and recovery |
 | `check_profile_ui.py` | Profile sections, draft persistence, Markdown, and staged image edits |
 | `check_event_tools_ui.py` | Organizer tools, settings, shared headers, and retained input |
 | `check_stones_ui.py` | Playback state, mute/preview, audio caching, and calibration controls |
