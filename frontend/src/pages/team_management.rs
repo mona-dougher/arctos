@@ -138,7 +138,7 @@ fn TeamManagers(team_id: String, team_name: String) -> Element {
                     remove.set(None);
                     data.restart();
                     notice.set(Some(if adding {
-                        format!("{} can now manage this team.", player.name)
+                        format!("{} was added as a team manager.", player.name)
                     } else {
                         format!("{} no longer manages this team.", player.name)
                     }));
@@ -156,7 +156,7 @@ fn TeamManagers(team_id: String, team_name: String) -> Element {
                 h2 { id: "team-managers-heading", class: "h4", "Managers" }
                 button { id: "add-team-manager", r#type: "button", class: "btn btn-outline-secondary", aria_haspopup: "dialog", onclick: move |_| { error.set(None); picker.set(true); }, "Add manager" }
             }
-            p { class: "text-muted", "Managers can edit this team, manage rosters and registrations, and organize its events. Only the team account can add or remove managers." }
+            p { class: "text-muted", "Managers can edit the team profile, manage registrations and rosters, and organize events and leagues assigned to the team. Only the team account can add or remove managers." }
             if let Some(message) = notice() { p { role: "status", "{message}" } }
             if !picker() && remove().is_none() { if let Some(message) = error() { p { class: "text-danger", role: "alert", "{message}" } } }
             if let Some(Ok(managers)) = snapshot {
@@ -174,7 +174,7 @@ fn TeamManagers(team_id: String, team_name: String) -> Element {
         }
         if picker() {
             TeamPlayerPicker { path: format!("{}/manager-candidates", urlencoding::encode(&team_id)),
-                title: format!("Add a manager to {team_name}"), help: "Choose a player account. They will be able to manage this team immediately.".to_string(),
+                title: format!("Add a manager to {team_name}"), help: "Choose a player account to add as a team manager. They can edit the team profile, manage registrations and rosters, and organize events and leagues assigned to the team. Players join event and league rosters separately.".to_string(),
                 search_first: true, busy: busy(), error: error(), action: "Add manager".to_string(),
                 on_close: move |_| picker.set(false), on_select: move |player| on_write.call((player, true)) }
         }
@@ -240,9 +240,9 @@ fn TeamPlayerPicker(
                 button { r#type: "button", class: "btn-close", aria_label: "Close", disabled: busy, onclick: move |_| on_close.call(()) }
             }
             div { class: "modal-body",
-                p { class: "text-muted", "{help}" }
+                p { id: "team-player-help", class: "text-muted", "{help}" }
                 label { r#for: "team-player-search", class: "form-label", "Find a player" }
-                input { id: "team-player-search", r#type: "search", class: "form-control", placeholder: "Name or username", value: search, disabled: busy, oninput: move |event| search.set(event.value()) }
+                input { id: "team-player-search", r#type: "search", class: "form-control", aria_describedby: "team-player-help", placeholder: "Name or username", value: search, disabled: busy, oninput: move |event| search.set(event.value()) }
                 if let Some(message) = error { p { role: "alert", class: "text-danger mt-2", "{message}" } }
                 if pending { p { role: "status", class: "mt-3", "Searching…" } }
                 else if let Some(Ok(result)) = data.read().as_ref() {
@@ -466,15 +466,22 @@ pub fn TeamEventPanel(team_id: String, kind: String, slug: String) -> Element {
                                                     if active || pending {
                                                     div { class: "team-row-actions",
                                                         if pending {
-                                                            button { r#type: "button", class: "btn btn-outline-primary", disabled: busy() || needs_check() || full, aria_label: format!("Approve {}", name), onclick: { let path = format!("{member_path}/approve"); move |_| write.call(TeamAction { path: path.clone(), method: "POST".into(), body: serde_json::json!({}), message: "Player approved.".into() }) }, "Approve" }
+                                                            button { r#type: "button", class: "btn btn-outline-success", disabled: busy() || needs_check() || full, aria_label: format!("Approve {}", name), onclick: { let path = format!("{member_path}/approve"); move |_| write.call(TeamAction { path: path.clone(), method: "POST".into(), body: serde_json::json!({}), message: "Player approved.".into() }) },
+                                                                i { class: "fas fa-check", aria_hidden: "true" }
+                                                                "Approve"
+                                                            }
                                                         }
-                                                        button { r#type: "button", class: "btn btn-outline-secondary", disabled: busy() || needs_check() || (!pending && !info.roster_open), aria_haspopup: "dialog",
+                                                        button { r#type: "button", class: if pending { "btn btn-outline-danger" } else { "btn btn-outline-secondary" }, disabled: busy() || needs_check() || (!pending && !info.roster_open), aria_haspopup: "dialog",
                                                             aria_label: if pending { format!("Decline {}", name) } else { format!("Remove {} from team", name) },
                                                             onclick: { let path = format!("{member_path}/{}", if pending { "decline" } else { "remove" }); let name = name.clone(); move |_| {
                                                                 error.set(None); confirmation.set(Some((TeamAction { path: path.clone(), method: "POST".into(), body: serde_json::json!({}), message: if pending { "Player request declined." } else { "Player removed from team." }.into() },
                                                                     if pending { format!("Decline {name}'s request?") } else { format!("Remove {name} from this team?") },
                                                                     "The player will remain registered for the event, unattached to a team. Their payment and waiver will stay unchanged.".into())));
-                                                            } }, if pending { "Decline" } else { "Remove" }
+                                                            } },
+                                                            if pending {
+                                                                i { class: "fas fa-xmark", aria_hidden: "true" }
+                                                                "Decline"
+                                                            } else { "Remove" }
                                                         }
                                                     }
                                                 }
