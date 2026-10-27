@@ -593,7 +593,7 @@
 .arctos-app .app-header { position: sticky; top: 0; z-index: 1030; background: var(--ui-nav-surface); border-bottom: 1px solid var(--ui-nav-border); padding-top: env(safe-area-inset-top); }
 .arctos-app .app-header-inner { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 20px; max-width: 1440px; min-height: 76px; margin-inline: auto; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
 .arctos-app .app-brand { display: inline-flex; align-items: center; gap: 10px; width: fit-content; color: var(--ui-nav-text); text-decoration: none; font-size: 1.25rem; font-weight: 700; letter-spacing: -.035em; }
-.arctos-app .brand-mark { width: 34px; height: 34px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--ui-gradient-start), var(--ui-gradient-end)); color: var(--ui-gradient-contrast); border-radius: 9px; font-size: 16px; }
+.arctos-app .brand-mark { height: 34px; width: auto; flex-shrink: 0; display: block; }
 .arctos-app .app-nav { display: flex; gap: 3px; align-items: center; min-width: 0; }
 .arctos-app .app-nav-link { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border-radius: 8px; color: var(--ui-nav-muted); text-decoration: none; font-size: .875rem; font-weight: 550; white-space: nowrap; }
 .arctos-app .app-nav-link:hover:not(.active) { background: var(--ui-surface-hover); color: var(--ui-text); }
