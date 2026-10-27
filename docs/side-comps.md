@@ -28,7 +28,7 @@ competition preserves its publication settings.
 ## Standings
 
 The results page shows one standings table. Chain Pits use **Chain/breaking**;
-choose **Chains** or **Breaks** above the table. Bear Pits use **Dueling**.
+select the **Chains** or **Breaks** tab above the table. Bear Pits use **Dueling**.
 
 **All weapons** shows the configured number of leaders, starting at three.
 Choosing a weapon shows its top player. Organizers can see every matching player;

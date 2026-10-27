@@ -34,7 +34,7 @@
 .arctos-app .event-route-tabs-bar { width: 100%; background: var(--ui-surface); border-bottom: 1px solid var(--ui-border); }
 .arctos-app .event-route-tabs { width: 100%; padding-inline: 24px; display: flex; flex-wrap: nowrap; gap: .75rem; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 24px; scrollbar-width: thin; }
 .arctos-app .event-route-tab { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: .5rem; min-height: 54px; padding: .85rem .65rem; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--ui-muted); text-decoration: none; white-space: nowrap; font-size: .95rem; font-weight: 600; }
-.arctos-app .event-route-tab[aria-current=page] { color: var(--ui-link); border-bottom-color: var(--ui-link); font-weight: 700; }
+.arctos-app .event-route-tab:is([aria-current=page], [aria-selected=true]) { color: var(--ui-link); border-bottom-color: var(--ui-link); font-weight: 700; }
 .arctos-app .event-route-tab:hover:not(:disabled) { color: var(--ui-link); background: var(--ui-surface-hover); }
 .arctos-app .event-route-tab:focus-visible { outline: 3px solid var(--ui-link); outline-offset: -4px; }
 .arctos-app .event-route-tab:disabled { opacity: .55; color: var(--ui-muted); cursor: default; }

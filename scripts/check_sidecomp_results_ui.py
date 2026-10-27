@@ -319,12 +319,16 @@ async def check_table_layout(page: Page, allow_horizontal_scroll: bool = False) 
         assert not table["missingScopes"] and not table["unalignedNumbers"], table
         assert not table["smallControls"], f"Standings controls are clipped or smaller than 44px: {table}"
         assert len(set(table["columnCounts"])) == 1, f"Headers and rows have different columns: {table}"
-    small_groups = await page.locator(".sidecomp-group-option").evaluate_all("""labels => labels.flatMap(label => {
-        const rect = label.getBoundingClientRect();
+    small_tabs = (
+        await page.get_by_role("tablist", name="Results", exact=True)
+        .get_by_role("tab")
+        .evaluate_all("""tabs => tabs.flatMap(tab => {
+        const rect = tab.getBoundingClientRect();
         return rect.width < 43.9 || rect.height < 43.9 || rect.left < -1 || rect.right > innerWidth + 1
-            ? [{text: label.textContent, width: rect.width, height: rect.height}] : [];
+            ? [{text: tab.textContent, width: rect.width, height: rect.height}] : [];
     })""")
-    assert not small_groups, f"Results group controls are clipped or smaller than 44px: {small_groups}"
+    )
+    assert not small_tabs, f"Results tabs are clipped or smaller than 44px: {small_tabs}"
 
 
 async def check_keyboard_focus(control) -> None:
@@ -362,17 +366,42 @@ async def capture_state(check: SmokeCheck, page: Page, name: str) -> None:
 
 
 async def show_breaks(page: Page):
-    await page.get_by_role("radio", name="Breaks", exact=True).check()
+    await page.get_by_role("tab", name="Breaks", exact=True).click()
     section = page.get_by_role("region", name="Breaks", exact=True)
     await expect(section).to_be_visible()
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
     return section
 
 
+async def check_results_tabs(page: Page, comp_id: int, active: str) -> None:
+    tabs = page.get_by_role("tablist", name="Results", exact=True)
+    await expect(tabs.get_by_role("tab")).to_have_count(2)
+    await expect(page.get_by_role("tabpanel", include_hidden=True)).to_have_count(2)
+    for title in ("Chains", "Breaks"):
+        tab = tabs.get_by_role("tab", name=title, exact=True)
+        tab_id = f"sidecomp-{comp_id}-tab-{title.lower()}"
+        panel_id = f"sidecomp-{comp_id}-panel-{title.lower()}"
+        panel = page.locator(f'[id="{panel_id}"]')
+        selected = title == active
+        await expect(tab).to_have_attribute("id", tab_id)
+        await expect(tab).to_have_attribute("aria-controls", panel_id)
+        await expect(tab).to_have_attribute("aria-selected", str(selected).lower())
+        await expect(tab).to_have_attribute("tabindex", "0" if selected else "-1")
+        await expect(panel).to_have_attribute("role", "tabpanel")
+        await expect(panel).to_have_attribute("aria-labelledby", tab_id)
+        if selected:
+            await expect(page.get_by_role("tabpanel", name=title, exact=True)).to_be_visible()
+            await expect(panel).to_have_attribute("tabindex", "0")
+            await expect(panel.locator(".sidecomp-standings-table")).to_have_count(1)
+        else:
+            await expect(panel).to_be_hidden()
+            await expect(panel.locator(".sidecomp-standings-table")).to_have_count(0)
+
+
 async def verify(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> None:
     await page.goto(f"{check.base_url}/demo-open/sidecomps/{fixture.comp_id}/results")
-    groups = page.get_by_role("group", name="Results", exact=True)
-    await expect(groups.get_by_role("radio", name="Chains", exact=True)).to_be_checked()
+    tabs = page.get_by_role("tablist", name="Results", exact=True)
+    await check_results_tabs(page, fixture.comp_id, "Chains")
     chains = page.get_by_role("region", name="Chains", exact=True)
     await assert_players(chains, CHAIN_NAMES[:3])
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
@@ -382,11 +411,25 @@ async def verify(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> No
     await chain_weapon.select_option("CHAIN")
     await assert_players(chains, CHAIN_NAMES[:1])
     await expect(chains.locator("thead th")).to_have_text(["Rank", "Player", "Wins↓"])
-    # Native radio keyboard navigation changes the active group without adding tables.
+    # Tabs use one keyboard stop; arrow keys activate preloaded scoring groups.
     await page.keyboard.press("Tab")
-    await check_keyboard_focus(groups.get_by_role("radio", name="Chains", exact=True))
-    await page.keyboard.press("ArrowRight")
-    await expect(groups.get_by_role("radio", name="Breaks", exact=True)).to_be_checked()
+    await check_keyboard_focus(tabs.get_by_role("tab", name="Chains", exact=True))
+    for key, title in (
+        ("ArrowRight", "Breaks"),
+        ("ArrowRight", "Chains"),
+        ("ArrowLeft", "Breaks"),
+        ("Home", "Chains"),
+        ("End", "Breaks"),
+        ("Space", "Breaks"),
+        ("Enter", "Breaks"),
+    ):
+        await page.keyboard.press(key)
+        await expect(tabs.get_by_role("tab", name=title, exact=True)).to_be_focused()
+        await check_results_tabs(page, fixture.comp_id, title)
+    await page.keyboard.press("Tab")
+    await expect(page.get_by_role("tabpanel", name="Breaks", exact=True)).to_be_focused()
+    await page.keyboard.press("Tab")
+    await expect(page.get_by_role("combobox", name="Weapon", exact=True)).to_be_focused()
     breaks = await show_breaks(page)
     await assert_players(breaks, STAFF_NAMES)
     await capture_state(check, page, "sidecomp-chain-breaks")
@@ -409,7 +452,8 @@ async def verify(check: SmokeCheck, page: Page, fixture: StandingsFixture) -> No
     fixture.delay_next("FLORENTINE")
     await weapon.select_option("FLORENTINE")
     await asyncio.wait_for(fixture.delay_started.wait(), TIMEOUT_MS / 1000)
-    await groups.get_by_role("radio", name="Chains", exact=True).check()
+    await tabs.get_by_role("tab", name="Chains", exact=True).click()
+    await check_results_tabs(page, fixture.comp_id, "Chains")
     await expect(chains).to_be_visible()
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
     fixture.release_delay.set()
@@ -466,7 +510,7 @@ async def verify_personal_rank(check: SmokeCheck, page: Page, fixture: Standings
     await expect(personal.get_by_text("Wins: 3", exact=True)).to_be_visible()
     await expect(personal.get_by_text("Losses: 0", exact=True)).to_be_visible()
     # The personal result remains available even when the other scoring group is selected.
-    await expect(page.get_by_role("radio", name="Chains", exact=True)).to_be_checked()
+    await expect(page.get_by_role("tab", name="Chains", exact=True)).to_have_attribute("aria-selected", "true")
     breaks = await show_breaks(page)
     weapon = breaks.get_by_role("combobox", name="Weapon", exact=True)
     await assert_players(breaks, STAFF_NAMES)
@@ -574,7 +618,7 @@ async def verify_bear(check: SmokeCheck, page: Page, fixture: StandingsFixture) 
     await assert_players(section, CHAIN_NAMES[:3])
     await expect(page.locator(".sidecomp-standings-table")).to_have_count(1)
     await expect(page.get_by_role("region", name="Weapon class leaders", exact=True)).to_have_count(0)
-    await expect(page.get_by_role("group", name="Results", exact=True)).to_have_count(0)
+    await expect(page.get_by_role("tablist", name="Results", exact=True)).to_have_count(0)
     await capture_state(check, page, "sidecomp-bear-overall")
     await weapon.select_option("FLORENTINE")
     await assert_players(section, [BEAR_CLASS_NAMES[4]])

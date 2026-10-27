@@ -663,8 +663,8 @@ view; selecting a weapon shows its top player. Blank publishes every matching
 player, and zero hides results. Organizers can view complete standings when
 results are enabled. Finalizing preserves these settings.
 
-Results appear in one table. For Chain Pits (**Chain/breaking**), choose **Chains**
-or **Breaks**. Bear Pits use **Dueling**. The **Weapon** dropdown includes only
+Results appear in one table. Chain Pits (**Chain/breaking**) have **Chains** and
+**Breaks** tabs. Bear Pits use **Dueling**. The **Weapon** dropdown includes only
 weapons with valid results, including losses. Each row shows the player's rank,
 identity, and scores. Ranks apply to the selected weapon or group.
 

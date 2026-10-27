@@ -3,6 +3,7 @@ use crate::components::{pompfen_by_id, PompfenIcon};
 use crate::types::{SideCompStandingRow, SideCompStandingTable, SideCompStandings};
 use crate::Route;
 use dioxus::prelude::*;
+use wasm_bindgen::JsCast;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::future::TimeoutFuture;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +49,20 @@ impl StandingSelection {
             self.sort = StandingSort::Wins;
         }
         self
+    }
+}
+
+fn focus_results_tab(comp_id: i32, table_id: &str) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    if let Some(tab) = document
+        .get_element_by_id(&format!("sidecomp-{comp_id}-tab-{table_id}"))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let options = web_sys::FocusOptions::new();
+        options.set_prevent_scroll(true);
+        let _ = tab.focus_with_options(&options);
     }
 }
 
@@ -507,10 +522,11 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
                             let publication_policy = PublicationPolicy::from_standings(&data);
                             let tables = data.tables.clone();
                             let selected_id = selected_group();
-                            let active_table = tables.iter()
+                            let active_id = tables.iter()
                                 .find(|table| table.id == selected_id)
                                 .or_else(|| tables.first())
-                                .cloned();
+                                .map(|table| table.id.clone())
+                                .unwrap_or_default();
                             let name = data.name.clone();
                             let title = if data.finalized {
                                 format!("{name} - Results (Final)")
@@ -529,30 +545,61 @@ pub fn SideCompResults(url: String, comp_id: i32) -> Element {
                                     }
                                 }
                                 if tables.len() > 1 {
-                                    fieldset { class: "d-flex flex-wrap gap-4 mb-3",
-                                        legend { class: "visually-hidden", "Results" }
-                                        for table in &tables {
-                                            label { class: "sidecomp-group-option",
-                                                input {
-                                                    class: "form-check-input m-0",
-                                                    r#type: "radio",
-                                                    name: "sidecomp-{comp_id}-group",
-                                                    value: table.id.clone(),
-                                                    checked: active_table.as_ref().is_some_and(|active| active.id == table.id),
-                                                    onchange: move |event| selected_group.set(event.value()),
-                                                }
-                                                span { "{table.title}" }
+                                    div {
+                                        class: "event-route-tabs sidecomp-results-tabs mb-3",
+                                        role: "tablist",
+                                        aria_label: "Results",
+                                        for (index, table) in tables.iter().enumerate() {
+                                            button {
+                                                key: "{table.id}",
+                                                id: "sidecomp-{comp_id}-tab-{table.id}",
+                                                class: "event-route-tab",
+                                                r#type: "button",
+                                                role: "tab",
+                                                aria_selected: active_id == table.id,
+                                                aria_controls: "sidecomp-{comp_id}-panel-{table.id}",
+                                                tabindex: if active_id == table.id { "0" } else { "-1" },
+                                                onclick: {
+                                                    let id = table.id.clone();
+                                                    move |_| selected_group.set(id.clone())
+                                                },
+                                                onkeydown: {
+                                                    let ids = tables.iter().map(|table| table.id.clone()).collect::<Vec<_>>();
+                                                    move |event: KeyboardEvent| {
+                                                        let next = match event.key() {
+                                                            Key::ArrowRight => (index + 1) % ids.len(),
+                                                            Key::ArrowLeft => (index + ids.len() - 1) % ids.len(),
+                                                            Key::Home => 0,
+                                                            Key::End => ids.len() - 1,
+                                                            _ => return,
+                                                        };
+                                                        event.prevent_default();
+                                                        selected_group.set(ids[next].clone());
+                                                        focus_results_tab(comp_id, &ids[next]);
+                                                    }
+                                                },
+                                                "{table.title}"
                                             }
                                         }
                                     }
                                 }
-                                if let Some(table) = active_table {
-                                    StandingsTableView {
-                                        key: "{table.id}-{viewer_key}",
-                                        comp_id,
-                                        table,
-                                        publication_policy,
-                                        viewer_player_id: viewer_player_id.clone(),
+                                for table in &tables {
+                                    div {
+                                        key: "{table.id}",
+                                        id: "sidecomp-{comp_id}-panel-{table.id}",
+                                        role: (tables.len() > 1).then_some("tabpanel"),
+                                        aria_labelledby: (tables.len() > 1).then(|| format!("sidecomp-{comp_id}-tab-{}", table.id)),
+                                        tabindex: (tables.len() > 1).then_some("0"),
+                                        hidden: active_id != table.id,
+                                        if active_id == table.id {
+                                            StandingsTableView {
+                                                key: "{table.id}-{viewer_key}",
+                                                comp_id,
+                                                table: table.clone(),
+                                                publication_policy,
+                                                viewer_player_id: viewer_player_id.clone(),
+                                            }
+                                        }
                                     }
                                 }
                             }
