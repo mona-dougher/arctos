@@ -595,9 +595,11 @@ tournament, or of the league when the tournament belongs to one.
 
 Standings. `CHAIN_BREAKING` has two tables, `chains` and `breaks`; every
 other type has one, `all`. Rows are ranked by wins, or by win percentage
-when the table tracks losses. When the organizers show only the top
-players, each table has only those rows. `404` when the organizers have
-hidden the results.
+when the table tracks losses. This endpoint returns the public summary: a
+positive public result limit selects that many rows per table. Its payload
+contains the published tables. Personal results are provided by the application
+endpoint. `404` when the organizers have hidden
+the results.
 
 ```json
 {

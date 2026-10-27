@@ -269,7 +269,8 @@ fn main() {
     }
     dioxus::launch(|| {
         rsx! {
-            document::Link { rel: "icon", r#type: "image/svg+xml", href: asset!("/assets/favicon.svg") }
+            document::Link { rel: "icon", r#type: "image/svg+xml", media: "(prefers-color-scheme: light)", href: asset!("/assets/arctos-light.png") }
+            document::Link { rel: "icon", r#type: "image/svg+xml", media: "(prefers-color-scheme: dark)", href: asset!("/assets/arctos-dark.png") }
             Router::<Route> {}
         }
     });

@@ -654,9 +654,26 @@ members appear as unattached until the team approves them. Organizers can also
 manage entries through the side competition's tools.
 
 Organizers control registration, active scoring, enabled weapons, loss tracking,
-and how many standings are public. Logged-in users can record results while a
+and results display. Logged-in users can record results while a
 competition is active and not finalized. Results record their submitter;
 organizers review validity and resolve flags before finalizing.
+
+The **Public result limit** starts at three. It controls the **All weapons**
+view; selecting a weapon shows its top player. Blank publishes every matching
+player, and zero hides results. Organizers can view complete standings when
+results are enabled. Finalizing preserves these settings.
+
+Results appear in one table. Chain Pits (**Chain/breaking**) have **Chains** and
+**Breaks** tabs. Bear Pits use **Dueling**. The **Weapon** dropdown includes only
+weapons with valid results, including losses. Each row shows the player's rank,
+identity, and scores. Ranks apply to the selected weapon or group.
+
+Select **Wins** or **Win %** to change the ranking. Live updates retain the
+selection; a weapon without valid results resets to **All weapons**.
+
+Signed-in players see their own rank and scores above the table in **Your result**,
+including entries below the public limit. This card uses the default overall or
+group ranking and stays visible while filtering. Their rows carry a **You** label.
 
 ### Running a Side Comp
 
@@ -668,7 +685,7 @@ review.
 
 Recent entries remain visible while scoring. Organizers use **Manage results**
 to review entries and finalize the competition. Public standings update as
-results change, subject to the configured visibility limit.
+results change while results are enabled.
 
 ## OBS Scoreboard Integration
 

@@ -110,7 +110,7 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                                 match raw.parse::<i32>() {
                                     Ok(v) if v >= 0 => Some(v),
                                     _ => {
-                                        error.set(Some("Top N results must be a non-negative integer or blank".into()));
+                                        error.set(Some("Public result limit must be a non-negative integer or blank".into()));
                                         return;
                                     }
                                 }
@@ -217,7 +217,7 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         summary { "Advanced options" small {
                             "Loss tracking, weapon rules, and standings"
                             if allowed_weapons().len() != default_allowed_weapons().len() { " · restricted weapons" }
-                            if !top_n_text().trim().is_empty() { " · limited results" }
+                            if !top_n_text().trim().is_empty() { " · results display configured" }
                         } }
                         div { class: "settings-advanced-body",
                     if type_() == "CHAIN_BREAKING" {
@@ -279,15 +279,19 @@ pub fn SideCompEdit(url: String, comp_id: i32) -> Element {
                         disabled_warning_count,
                     }
                     div { class: "mb-3",
-                        label { class: "form-label", r#for: "sidecomp-top-n", "Only show top N results" }
+                        label { class: "form-label", r#for: "sidecomp-top-n", "Public result limit" }
                         input {
                             id: "sidecomp-top-n",
+                            aria_describedby: "sidecomp-top-n-help",
                             class: "form-control",
                             r#type: "number",
                             min: "0",
                             placeholder: "Leave blank to show all",
                             value: "{top_n_text}",
                             oninput: move |evt| top_n_text.set(evt.value()),
+                        }
+                        div { id: "sidecomp-top-n-help", class: "form-text",
+                            "Applies to All weapons; a weapon filter shows its top player. Leave blank to publish everyone, or enter 0 to hide results."
                         }
                     }
                         }
